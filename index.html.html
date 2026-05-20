@@ -1,0 +1,2100 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>채용마스터 Pro (Manual Edition)</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone@7.23.5/babel.min.js"></script>
+    <!-- SheetJS for Excel upload -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Tailwind Config -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 900: '#1e3a8a',
+                        },
+                        slate: { 850: '#1e293b' }
+                    },
+                    animation: {
+                        'slide-in': 'slideIn 0.3s ease-out forwards',
+                    },
+                    keyframes: {
+                        slideIn: { '0%': { transform: 'translateX(20px)', opacity: '0' }, '100%': { transform: 'translateX(0)', opacity: '1' } },
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Pretendard', sans-serif; background-color: #f1f5f9; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script>
+        // Set notificationEndpoint to your HTTPS bridge before production use.
+        window.RECRUIT_NOTI_CONFIG = window.RECRUIT_NOTI_CONFIG || {
+            notificationEndpoint: ''
+        };
+    </script>
+
+    <!-- Firebase SDK Setup & Logic -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+
+        // Global Variable Setup for Environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'recruit-pro-e97a3';
+        
+        const firebaseConfig = {
+            apiKey: "AIzaSyAroAK529IpkyCmLx8Hj0cdqqP19f-uBN0",
+            authDomain: "recruit-pro-e97a3.firebaseapp.com",
+            projectId: "recruit-pro-e97a3",
+            storageBucket: "recruit-pro-e97a3.firebasestorage.app",
+            messagingSenderId: "530764987704",
+            appId: "1:530764987704:web:533e4a1fd7e7bb848795cd",
+            measurementId: "G-BRSVEG4JMG"
+        };
+        
+        window.fbServices = {
+            ready: false,
+            db: null,
+            auth: null,
+            appId: appId,
+            getCollectionPath: (userId) => {
+                const path = ['artifacts', appId, 'public', 'data', 'recruit_jobs'];
+                return collection(window.fbServices.db, ...path);
+            },
+            api: { setDoc, deleteDoc, doc, onSnapshot, onAuthStateChanged, collection, runTransaction }
+        };
+
+        try {
+            const app = initializeApp(firebaseConfig);
+            const auth = getAuth(app);
+            const db = getFirestore(app);
+            
+            window.fbServices.db = db;
+            window.fbServices.auth = auth;
+
+            const initAuth = async () => {
+                try {
+                    let signedIn = false;
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        try {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                            signedIn = true;
+                        } catch (e) {
+                            console.warn("Custom token auth failed.", e);
+                        }
+                    }
+                    if (!signedIn) {
+                        await signInAnonymously(auth);
+                    }
+                    window.fbServices.ready = true;
+                    window.dispatchEvent(new Event('firebase-ready'));
+                    console.log("Firebase Connected Successfully. App ID:", appId);
+                } catch (e) {
+                    console.error("Auth Failed", e);
+                    window.fbServices.ready = true;
+                    window.dispatchEvent(new Event('firebase-ready'));
+                }
+            };
+            initAuth();
+        } catch (e) {
+            console.error("Firebase Initialization Failed", e);
+        }
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        const Icons = {
+            Briefcase: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="14" x="2" y="7" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
+            Users: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+            Plus: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>,
+            Search: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
+            X: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>,
+            ArrowLeft: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>,
+            Layout: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><line x1="3" x2="21" y1="9" y2="9"/><line x1="9" x2="9" y1="21" y2="9"/></svg>,
+            CheckCircle: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+            Activity: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+            TrendingUp: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+            Edit: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>,
+            Trash2: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>,
+            Calendar: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>,
+            Archive: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>,
+            BarChart: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg>,
+            Zap: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+            Clock: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+            AlertTriangle: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>,
+            ChevronLeft: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>,
+            ChevronRight: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>,
+            Cloud: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19c0-3.037-2.463-5.5-5.5-5.5S6.5 15.963 6.5 19"/><path d="M19 19V9a7 7 0 0 0-7-7 7 7 0 0 0-7 7v10"/></svg>,
+            StopCircle: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><rect width="6" height="6" x="9" y="9"/></svg>,
+            FileText: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>,
+            Phone: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+            Mail: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>,
+            MapPin: (p) => <svg {...p} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+        };
+
+        const STAGES = ['접수', '서류검토', '1차면접', '2차면접', '최종합격', '불합격'];
+        const TEMPLATE_SETTINGS_KEY = 'recruitpro_kakao_template_settings';
+        const DEFAULT_TEMPLATE_SETTINGS = {
+            companyName: '채용 담당자',
+            introLine: '면접 가능 시간 안내드립니다.',
+            actionLine: '가능한 시간을 선택해주세요.',
+            footerLine: '본 메시지는 채용 일정 조율을 위한 안내입니다.',
+            previewCandidateName: '홍길동',
+            previewJobTitle: '생산기술',
+            previewBookingUrl: 'https://your-domain.example/recruit-booking.html?mode=booking&jobId=preview&candidateId=preview&token=preview',
+            templateBody: [
+                '{{candidateName}}님, 안녕하세요.',
+                '{{companyName}}입니다.',
+                '{{jobTitleBracket}} {{introLine}}',
+                '',
+                '{{slotLines}}',
+                '',
+                '{{actionLine}}',
+                '{{bookingUrl}}',
+                '',
+                '{{footerLine}}'
+            ].join('\n')
+        };
+        const SCHEDULE_REQUEST_STATUS_LABELS = {
+            draft: '초안',
+            ready: '발송준비',
+            sent: '링크발송',
+            responded: '지원자응답',
+            confirmed: '일정확정'
+        };
+        const generateId = () => Math.random().toString(36).substr(2, 9);
+        const generateToken = () => `${generateId()}${generateId()}`;
+        const createInterviewSlot = (datetime = '') => ({ id: generateId(), datetime });
+        const normalizeInterviewSlots = (slots = []) => {
+            const normalized = Array.isArray(slots)
+                ? slots.slice(0, 3).map((slot) => ({
+                    id: slot?.id || generateId(),
+                    datetime: slot?.datetime || ''
+                }))
+                : [];
+            while (normalized.length < 3) normalized.push(createInterviewSlot());
+            return normalized;
+        };
+        const getScheduleRequestStatus = (candidate) => candidate?.scheduleRequest?.status || 'draft';
+        const getBookingBaseUrl = () => {
+            if (typeof window === 'undefined') return 'https://your-domain.example/recruit-booking.html';
+            const { origin, pathname, protocol } = window.location;
+            if (protocol === 'http:' || protocol === 'https:') return `${origin}${pathname}`;
+            return 'https://your-domain.example/recruit-booking.html';
+        };
+        const getNotificationEndpoint = () => {
+            if (typeof window === 'undefined') return '';
+            return window.RECRUIT_NOTI_CONFIG?.notificationEndpoint || '';
+        };
+        const buildBookingUrl = ({ jobId, candidateId, token }) => {
+            if (!jobId || !candidateId || !token) return '';
+            const baseUrl = getBookingBaseUrl();
+            const url = new URL(baseUrl);
+            url.searchParams.set('mode', 'booking');
+            url.searchParams.set('jobId', jobId);
+            url.searchParams.set('candidateId', candidateId);
+            url.searchParams.set('token', token);
+            return url.toString();
+        };
+        const formatCandidateAddedAt = (candidate) => {
+            if (!candidate) return '-';
+            if (candidate.addedAt) return candidate.addedAt;
+            if (candidate.addedAtIso) return new Date(candidate.addedAtIso).toLocaleDateString('ko-KR');
+            return '-';
+        };
+        const formatDateTimeLabel = (value) => {
+            if (!value) return '-';
+            const d = new Date(value);
+            if (Number.isNaN(d.getTime())) return value;
+            return d.toLocaleString('ko-KR', {
+                year: 'numeric',
+                month: 'numeric',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        };
+        const getSelectedSlot = (candidate) => {
+            const slots = candidate?.scheduleRequest?.slots || [];
+            const selectedSlotId = candidate?.scheduleRequest?.selectedSlotId;
+            return slots.find((slot) => slot.id === selectedSlotId) || null;
+        };
+        const loadTemplateSettings = () => {
+            try {
+                const raw = localStorage.getItem(TEMPLATE_SETTINGS_KEY);
+                if (!raw) return { ...DEFAULT_TEMPLATE_SETTINGS };
+                const parsed = JSON.parse(raw);
+                return { ...DEFAULT_TEMPLATE_SETTINGS, ...(parsed || {}) };
+            } catch (error) {
+                return { ...DEFAULT_TEMPLATE_SETTINGS };
+            }
+        };
+        const renderMessageTemplate = (template, variables) => String(template || '')
+            .replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => variables[key] == null ? '' : String(variables[key]));
+        const buildInterviewRequestMessage = ({ candidateName, companyName, jobTitle, slots, bookingUrl, templateSettings }) => {
+            const settings = { ...DEFAULT_TEMPLATE_SETTINGS, ...(templateSettings || {}) };
+            const slotLines = (slots || [])
+                .filter((slot) => slot.datetime)
+                .map((slot, index) => `${index + 1}. ${formatDateTimeLabel(slot.datetime)}`)
+                .join('\n');
+            const variables = {
+                candidateName: candidateName || '지원자',
+                companyName: companyName || settings.companyName || '채용 담당자',
+                jobTitle: jobTitle || '',
+                jobTitleBracket: jobTitle ? `[${jobTitle}]` : '',
+                introLine: settings.introLine || '',
+                slotLines,
+                actionLine: settings.actionLine || '',
+                bookingUrl: bookingUrl || '',
+                footerLine: settings.footerLine || ''
+            };
+            return renderMessageTemplate(settings.templateBody, variables).trim();
+        };
+        
+        const getDday = (endDate) => {
+            const today = new Date();
+            const end = new Date(endDate);
+            today.setHours(0,0,0,0);
+            end.setHours(0,0,0,0);
+            const diffTime = end - today;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            if (diffDays < 0) return '마감';
+            if (diffDays === 0) return '오늘마감';
+            return `D-${diffDays}`;
+        };
+
+        const isExpired = (endDate) => {
+            const today = new Date();
+            const end = new Date(endDate);
+            today.setHours(0,0,0,0);
+            end.setHours(0,0,0,0);
+            return end < today;
+        };
+        const normalizePhone = (raw) => (raw || '').replace(/[^0-9]/g, '');
+        const toDateOnly = (value) => {
+            if (!value) return '';
+            const d = new Date(value);
+            if (Number.isNaN(d.getTime())) return '';
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+        };
+        const csvEscape = (value) => {
+            const v = String(value ?? '');
+            if (/[",\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
+            return v;
+        };
+        const escapeHtml = (value) => String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
+        const Modal = ({ isOpen, onClose, title, children, size = 'md' }) => {
+            if (!isOpen) return null;
+            const sizeClass = size === 'lg' ? 'max-w-3xl' : 'max-w-lg';
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+                    <div className={`bg-white rounded-2xl shadow-2xl w-full ${sizeClass} overflow-hidden flex flex-col max-h-[90vh]`}>
+                        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                            <h3 className="font-bold text-lg text-gray-800">{title}</h3>
+                            <button onClick={onClose} className="p-1 hover:bg-gray-200 rounded-full transition-colors"><Icons.X className="w-5 h-5 text-gray-500" /></button>
+                        </div>
+                        <div className="p-6 overflow-y-auto custom-scrollbar">{children}</div>
+                    </div>
+                </div>
+            );
+        };
+        const Badge = ({ children, colorClass }) => (<span className={`px-2 py-0.5 rounded text-xs font-semibold border ${colorClass}`}>{children}</span>);
+        class ErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, error: null };
+            }
+            static getDerivedStateFromError(error) {
+                return { hasError: true, error };
+            }
+            componentDidCatch(error, errorInfo) {
+                console.error('ErrorBoundary caught an error:', error, errorInfo);
+            }
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6">
+                            <div className="max-w-lg w-full bg-white border border-red-100 rounded-2xl shadow-xl p-6">
+                                <h2 className="text-xl font-bold text-red-600 mb-2">시스템 오류 발생</h2>
+                                <p className="text-sm text-slate-600 mb-4">앱 실행 중 예외가 발생했습니다. 새로고침 후 다시 시도해주세요.</p>
+                                <div className="text-xs text-slate-500 bg-slate-50 border rounded p-3 mb-4 break-all">
+                                    {this.state.error?.message || '알 수 없는 오류'}
+                                </div>
+                                <button
+                                    onClick={() => window.location.reload()}
+                                    className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg font-semibold"
+                                >
+                                    새로고침
+                                </button>
+                            </div>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
+        const App = () => {
+            const pageParams = new URLSearchParams(window.location.search);
+            const isBookingMode = pageParams.get('mode') === 'booking';
+            const [jobs, setJobs] = useState([]);
+            const [fbReady, setFbReady] = useState(false);
+            const [user, setUser] = useState(null);
+            const [permissionError, setPermissionError] = useState(false);
+
+            const [currentMenu, setCurrentMenu] = useState('dashboard'); 
+            const [viewMode, setViewMode] = useState('list'); 
+            const [activeJobId, setActiveJobId] = useState(null);
+            
+            const [isCreateOpen, setIsCreateOpen] = useState(false);
+            const [isManualAddOpen, setIsManualAddOpen] = useState(false);
+            const [isBulkUploadOpen, setIsBulkUploadOpen] = useState(false);
+            const [bulkUploading, setBulkUploading] = useState(false);
+            const [bulkUploadResult, setBulkUploadResult] = useState(null);
+            const [editingJob, setEditingJob] = useState(null);
+            const [isCandidateModalOpen, setIsCandidateModalOpen] = useState(false);
+            const [selectedCandidate, setSelectedCandidate] = useState(null);
+            const [templateSettings, setTemplateSettings] = useState(() => loadTemplateSettings());
+            const [templateDraft, setTemplateDraft] = useState(() => loadTemplateSettings());
+            const [scheduleDraft, setScheduleDraft] = useState(() => ({
+                slots: normalizeInterviewSlots([]),
+                status: 'draft',
+                token: '',
+                sentAt: '',
+                respondedAt: '',
+                confirmedAt: '',
+                selectedSlotId: ''
+            }));
+            const [bookingActionBusy, setBookingActionBusy] = useState(false);
+
+            useEffect(() => {
+                const checkFirebase = () => {
+                    if (window.fbServices && window.fbServices.ready) {
+                        setFbReady(true);
+                        const { onAuthStateChanged } = window.fbServices.api;
+                        onAuthStateChanged(window.fbServices.auth, (u) => {
+                           setUser(u);
+                        });
+                    }
+                };
+                if (window.fbServices && window.fbServices.ready) {
+                    checkFirebase();
+                } else {
+                    window.addEventListener('firebase-ready', checkFirebase);
+                }
+                return () => window.removeEventListener('firebase-ready', checkFirebase);
+            }, []);
+
+            useEffect(() => {
+                if (!user || !fbReady || !window.fbServices.db) return;
+                const { onSnapshot } = window.fbServices.api;
+                const colRef = window.fbServices.getCollectionPath(user.uid);
+                
+                const unsubscribe = onSnapshot(colRef, (snapshot) => {
+                    const loadedJobs = snapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
+                    setJobs(loadedJobs);
+                    setPermissionError(false);
+                }, (error) => {
+                    if (error.code === 'permission-denied') setPermissionError(true);
+                });
+                return () => unsubscribe();
+            }, [user, fbReady]);
+
+            const firestoreWrite = async (jobId, data, isDelete = false) => {
+                if (!user) return;
+                const { setDoc, deleteDoc, doc } = window.fbServices.api;
+                const colRef = window.fbServices.getCollectionPath(user.uid);
+                const docRef = doc(colRef, jobId);
+                try {
+                    if (isDelete) await deleteDoc(docRef);
+                    else await setDoc(docRef, data, { merge: true });
+                } catch (e) {
+                    if (e.code === 'permission-denied') alert("데이터 저장 권한 오류 (Test Mode 필요)");
+                    else alert("저장 실패: " + e.message);
+                }
+            };
+            const updateCandidatesAtomic = async (jobId, updater) => {
+                if (!user || !jobId || typeof updater !== 'function') return null;
+                const { runTransaction, doc } = window.fbServices.api;
+                const colRef = window.fbServices.getCollectionPath(user.uid);
+                const docRef = doc(colRef, jobId);
+                try {
+                    const updatedCandidates = await runTransaction(window.fbServices.db, async (tx) => {
+                        const snap = await tx.get(docRef);
+                        if (!snap.exists()) throw new Error('공고 문서를 찾을 수 없습니다.');
+                        const jobData = snap.data() || {};
+                        const currentCandidates = Array.isArray(jobData.candidates) ? jobData.candidates : [];
+                        const nextCandidates = updater(currentCandidates);
+                        tx.update(docRef, { candidates: nextCandidates });
+                        return nextCandidates;
+                    });
+                    return updatedCandidates;
+                } catch (e) {
+                    console.error('지원자 동시 수정 실패:', e);
+                    alert('지원자 업데이트 중 충돌이 발생했습니다. 다시 시도해주세요.');
+                    return null;
+                }
+            };
+
+            const activeJob = useMemo(() => jobs.find(j => j.id === activeJobId), [jobs, activeJobId]);
+            const liveJobs = useMemo(() => jobs.filter(j => !j.deletedAt), [jobs]);
+            const trashJobs = useMemo(() => jobs.filter(j => !!j.deletedAt), [jobs]);
+            const activeJobs = useMemo(() => liveJobs.filter(j => j.period?.end && !isExpired(j.period.end)), [liveJobs]);
+            const closedJobs = useMemo(() => liveJobs.filter(j => j.period?.end && isExpired(j.period.end)), [liveJobs]);
+            const scheduleAlerts = useMemo(() => {
+                const today = toDateOnly(new Date());
+                const weekEnd = new Date();
+                weekEnd.setDate(weekEnd.getDate() + 7);
+                const withinWeekDeadlines = activeJobs
+                    .filter(j => j.period?.end && new Date(j.period.end) <= weekEnd)
+                    .sort((a, b) => (a.period?.end || '').localeCompare(b.period?.end || ''));
+                const missingInterviewSchedule = [];
+                const todayInterviews = [];
+                liveJobs.forEach((job) => {
+                    (job.candidates || []).forEach((c) => {
+                        if (String(c.status || '').includes('면접') && !c.interviewDate) {
+                            missingInterviewSchedule.push({ jobTitle: job.title, name: c.name, status: c.status });
+                        }
+                        if (c.interviewDate && toDateOnly(c.interviewDate) === today) {
+                            todayInterviews.push({ jobTitle: job.title, name: c.name, time: c.interviewDate });
+                        }
+                    });
+                });
+                return {
+                    withinWeekDeadlines,
+                    missingInterviewSchedule,
+                    todayInterviews
+                };
+            }, [activeJobs, liveJobs]);
+
+            useEffect(() => {
+                if (!user || trashJobs.length === 0) return;
+                const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+                trashJobs.forEach((job) => {
+                    if (job.deletedAt && Date.now() - job.deletedAt > THIRTY_DAYS) {
+                        firestoreWrite(job.id, null, true);
+                    }
+                });
+            }, [user, trashJobs]);
+
+            useEffect(() => {
+                if (!selectedCandidate) {
+                    setScheduleDraft({
+                        slots: normalizeInterviewSlots([]),
+                        status: 'draft',
+                        token: '',
+                        sentAt: '',
+                        respondedAt: '',
+                        confirmedAt: '',
+                        selectedSlotId: ''
+                    });
+                    return;
+                }
+                const request = selectedCandidate.scheduleRequest || {};
+                setScheduleDraft({
+                    slots: normalizeInterviewSlots(request.slots),
+                    status: request.status || 'draft',
+                    token: request.token || '',
+                    sentAt: request.sentAt || '',
+                    respondedAt: request.respondedAt || '',
+                    confirmedAt: request.confirmedAt || '',
+                    selectedSlotId: request.selectedSlotId || ''
+                });
+            }, [selectedCandidate]);
+
+            useEffect(() => {
+                if (currentMenu === 'template-settings') {
+                    setTemplateDraft(templateSettings);
+                }
+            }, [currentMenu, templateSettings]);
+
+            const handleSaveJob = async (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const startDate = fd.get('startDate');
+                const endDate = fd.get('endDate');
+                if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
+                    alert('공고 시작일은 마감일보다 늦을 수 없습니다.');
+                    return;
+                }
+                const jobData = {
+                    title: fd.get('title'), team: fd.get('team'), status: '채용중',
+                    meta: { type: fd.get('type'), level: fd.get('level'), salary: fd.get('salary'), location: fd.get('location') },
+                    period: { start: startDate, end: endDate },
+                    skills: fd.get('skills').split(',').map(s => s.trim()), description: fd.get('description'),
+                };
+                if (editingJob) {
+                    await firestoreWrite(editingJob.id, { ...editingJob, ...jobData });
+                    alert('공고가 수정되었습니다.');
+                } else {
+                    const newId = generateId();
+                    await firestoreWrite(newId, { ...jobData, id: newId, candidates: [] });
+                    alert('새로운 공고가 등록되었습니다.');
+                }
+                setIsCreateOpen(false); setEditingJob(null);
+            };
+
+            const handleManualAdd = async (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const email = String(fd.get('email') || '').trim().toLowerCase();
+                const phone = normalizePhone(fd.get('phone'));
+                const duplicate = liveJobs.find((job) =>
+                    (job.candidates || []).some((c) => {
+                        const emailSame = email && String(c.email || '').trim().toLowerCase() === email;
+                        const phoneSame = phone && normalizePhone(c.phone) === phone;
+                        return emailSame || phoneSame;
+                    })
+                );
+                if (duplicate) {
+                    alert(`중복 지원자 가능성이 있습니다.\n공고: ${duplicate.title}\n이메일/연락처를 확인해주세요.`);
+                    return;
+                }
+                const now = new Date();
+                const newCandidate = {
+                    id: generateId(), 
+                    name: fd.get('name') || '이름 없음', 
+                    email: fd.get('email') || '',
+                    phone: fd.get('phone') || '',
+                    address: fd.get('address') || '',
+                    note: fd.get('note') || '',
+                    status: '접수', 
+                    addedAt: now.toLocaleDateString('ko-KR'),
+                    addedAtIso: now.toISOString(),
+                    addedAtTs: now.getTime(),
+                    interviewDate: null
+                };
+                
+                if (!activeJob?.id) return;
+                await updateCandidatesAtomic(activeJob.id, (currentCandidates) => [...currentCandidates, newCandidate]);
+                setIsManualAddOpen(false);
+                alert('지원자가 등록되었습니다.');
+            };
+            const downloadCandidateTemplate = () => {
+                const rows = [
+                    ['이름', '이메일', '연락처', '주소', '비고'],
+                    ['홍길동', 'sample@company.com', '010-1234-5678', '서울시 강남구', '포트폴리오 우수']
+                ];
+                const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
+                const bom = '\uFEFF';
+                const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = '지원자_대량업로드_양식.csv';
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+            const parseCsvRows = (text) => {
+                const lines = String(text || '').replace(/\r/g, '').split('\n').filter((line) => line.trim() !== '');
+                if (lines.length < 2) return [];
+                const parseLine = (line) => {
+                    const result = [];
+                    let current = '';
+                    let inQuotes = false;
+                    for (let i = 0; i < line.length; i += 1) {
+                        const ch = line[i];
+                        const next = line[i + 1];
+                        if (ch === '"' && inQuotes && next === '"') {
+                            current += '"';
+                            i += 1;
+                        } else if (ch === '"') {
+                            inQuotes = !inQuotes;
+                        } else if (ch === ',' && !inQuotes) {
+                            result.push(current.trim());
+                            current = '';
+                        } else {
+                            current += ch;
+                        }
+                    }
+                    result.push(current.trim());
+                    return result;
+                };
+                const header = parseLine(lines[0]).map((h) => h.trim());
+                return lines.slice(1).map((line) => {
+                    const cols = parseLine(line);
+                    const row = {};
+                    header.forEach((key, idx) => { row[key] = cols[idx] || ''; });
+                    return row;
+                });
+            };
+            const mapCandidateRow = (raw) => {
+                const name = String(raw['이름'] || raw['성명'] || raw['name'] || '').trim();
+                const email = String(raw['이메일'] || raw['email'] || '').trim();
+                const phone = String(raw['연락처'] || raw['전화번호'] || raw['phone'] || '').trim();
+                const address = String(raw['주소'] || raw['주소지'] || raw['address'] || '').trim();
+                const note = String(raw['비고'] || raw['메모'] || raw['note'] || '').trim();
+                return { name, email, phone, address, note };
+            };
+            const handleBulkUploadFile = async (file) => {
+                if (!file) return;
+                if (!activeJob?.id) {
+                    alert('대상 공고를 먼저 선택해주세요.');
+                    return;
+                }
+                setBulkUploading(true);
+                setBulkUploadResult(null);
+                try {
+                    let rows = [];
+                    const fileName = String(file.name || '').toLowerCase();
+                    if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+                        if (!window.XLSX) throw new Error('엑셀 파서 로드 실패');
+                        const buffer = await file.arrayBuffer();
+                        const workbook = window.XLSX.read(new Uint8Array(buffer), { type: 'array' });
+                        const firstSheet = workbook.SheetNames[0];
+                        rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet], { defval: '' });
+                    } else {
+                        const text = await file.text();
+                        rows = parseCsvRows(text);
+                    }
+                    if (!rows.length) {
+                        alert('업로드할 데이터가 없습니다.');
+                        setBulkUploading(false);
+                        return;
+                    }
+                    const mapped = rows.map(mapCandidateRow);
+                    const duplicatesInSystem = [];
+                    const duplicatesInFile = [];
+                    const invalidRows = [];
+                    const validCandidates = [];
+                    const existingIndex = new Set();
+                    liveJobs.forEach((job) => {
+                        (job.candidates || []).forEach((c) => {
+                            const e = String(c.email || '').trim().toLowerCase();
+                            const p = normalizePhone(c.phone);
+                            if (e) existingIndex.add(`e:${e}`);
+                            if (p) existingIndex.add(`p:${p}`);
+                        });
+                    });
+                    const fileIndex = new Set();
+                    mapped.forEach((row, i) => {
+                        const rowNum = i + 2;
+                        const name = row.name;
+                        const email = String(row.email || '').toLowerCase();
+                        const phone = normalizePhone(row.phone);
+                        if (!name) {
+                            invalidRows.push(`행 ${rowNum}: 이름 누락`);
+                            return;
+                        }
+                        if (!email && !phone) {
+                            invalidRows.push(`행 ${rowNum}: 이메일/연락처 중 1개 이상 필요`);
+                            return;
+                        }
+                        const fileEmailKey = email ? `e:${email}` : '';
+                        const filePhoneKey = phone ? `p:${phone}` : '';
+                        if ((fileEmailKey && fileIndex.has(fileEmailKey)) || (filePhoneKey && fileIndex.has(filePhoneKey))) {
+                            duplicatesInFile.push(`행 ${rowNum}: 파일 내 중복`);
+                            return;
+                        }
+                        if ((fileEmailKey && existingIndex.has(fileEmailKey)) || (filePhoneKey && existingIndex.has(filePhoneKey))) {
+                            duplicatesInSystem.push(`행 ${rowNum}: 기존 데이터 중복`);
+                            return;
+                        }
+                        if (fileEmailKey) fileIndex.add(fileEmailKey);
+                        if (filePhoneKey) fileIndex.add(filePhoneKey);
+                        const now = new Date();
+                        validCandidates.push({
+                            id: generateId(),
+                            name,
+                            email: row.email || '',
+                            phone: row.phone || '',
+                            address: row.address || '',
+                            note: row.note || '',
+                            status: '접수',
+                            addedAt: now.toLocaleDateString('ko-KR'),
+                            addedAtIso: now.toISOString(),
+                            addedAtTs: now.getTime(),
+                            interviewDate: null
+                        });
+                    });
+                    if (!validCandidates.length) {
+                        setBulkUploadResult({
+                            total: rows.length,
+                            success: 0,
+                            failed: invalidRows.length + duplicatesInSystem.length + duplicatesInFile.length,
+                            invalidRows,
+                            duplicatesInSystem,
+                            duplicatesInFile
+                        });
+                        return;
+                    }
+                    await updateCandidatesAtomic(activeJob.id, (currentCandidates) => [...currentCandidates, ...validCandidates]);
+                    setBulkUploadResult({
+                        total: rows.length,
+                        success: validCandidates.length,
+                        failed: invalidRows.length + duplicatesInSystem.length + duplicatesInFile.length,
+                        invalidRows,
+                        duplicatesInSystem,
+                        duplicatesInFile
+                    });
+                } catch (err) {
+                    console.error('대량 업로드 실패:', err);
+                    alert(`대량 업로드 실패: ${err.message || err}`);
+                } finally {
+                    setBulkUploading(false);
+                }
+            };
+
+            const handleUpdateCandidateInterview = async (date) => {
+                if (!activeJob?.id || !selectedCandidate?.id) return;
+                const updatedCandidates = await updateCandidatesAtomic(activeJob.id, (currentCandidates) =>
+                    currentCandidates.map(c => c.id === selectedCandidate.id ? { ...c, interviewDate: date } : c)
+                );
+                if (updatedCandidates) {
+                    const latest = updatedCandidates.find(c => c.id === selectedCandidate.id);
+                    if (latest) setSelectedCandidate(latest);
+                }
+            };
+            const handleDraftSlotChange = (slotId, datetime) => {
+                setScheduleDraft((prev) => ({
+                    ...prev,
+                    slots: prev.slots.map((slot) => slot.id === slotId ? { ...slot, datetime } : slot)
+                }));
+            };
+            const persistScheduleRequest = async ({ markSent = false } = {}) => {
+                if (!activeJob?.id || !selectedCandidate?.id) return null;
+                const validSlots = scheduleDraft.slots.filter((slot) => slot.datetime);
+                if (!validSlots.length) {
+                    alert('제안 일정은 최소 1개 이상 입력해주세요.');
+                    return null;
+                }
+                setBookingActionBusy(true);
+                const nowIso = new Date().toISOString();
+                const updatedCandidates = await updateCandidatesAtomic(activeJob.id, (currentCandidates) =>
+                    currentCandidates.map((candidate) => {
+                        if (candidate.id !== selectedCandidate.id) return candidate;
+                        const currentRequest = candidate.scheduleRequest || {};
+                        const token = currentRequest.token || scheduleDraft.token || generateToken();
+                        const selectedSlotStillValid = currentRequest.selectedSlotId && validSlots.some((slot) => slot.id === currentRequest.selectedSlotId);
+                        const nextStatus = currentRequest.status === 'confirmed'
+                            ? 'confirmed'
+                            : markSent
+                                ? 'sent'
+                                : selectedSlotStillValid && currentRequest.status === 'responded'
+                                    ? 'responded'
+                                    : 'ready';
+                        return {
+                            ...candidate,
+                            scheduleRequest: {
+                                ...currentRequest,
+                                token,
+                                slots: validSlots,
+                                status: nextStatus,
+                                sentAt: markSent ? nowIso : (currentRequest.sentAt || ''),
+                                respondedAt: selectedSlotStillValid ? (currentRequest.respondedAt || '') : '',
+                                confirmedAt: currentRequest.confirmedAt || '',
+                                selectedSlotId: selectedSlotStillValid ? currentRequest.selectedSlotId : ''
+                            }
+                        };
+                    })
+                );
+                setBookingActionBusy(false);
+                if (!updatedCandidates) return null;
+                const latest = updatedCandidates.find((candidate) => candidate.id === selectedCandidate.id);
+                if (latest) setSelectedCandidate(latest);
+                return latest || null;
+            };
+            const copyBookingLink = async () => {
+                const latest = await persistScheduleRequest();
+                if (!latest) return;
+                const link = buildBookingUrl({
+                    jobId: activeJob?.id,
+                    candidateId: latest.id,
+                    token: latest.scheduleRequest?.token
+                });
+                if (!link) return;
+                try {
+                    await navigator.clipboard.writeText(link);
+                    alert('예약 링크가 복사되었습니다.');
+                } catch (err) {
+                    alert(`링크 복사 실패\n${link}`);
+                }
+            };
+            const markBookingLinkSent = async () => {
+                const latest = await persistScheduleRequest({ markSent: true });
+                if (!latest) return;
+                const bookingUrl = buildBookingUrl({
+                    jobId: activeJob?.id,
+                    candidateId: latest.id,
+                    token: latest.scheduleRequest?.token
+                });
+                const endpoint = getNotificationEndpoint();
+                const payload = {
+                    candidateId: latest.id,
+                    candidateName: latest.name,
+                    phone: latest.phone,
+                    email: latest.email,
+                    jobId: activeJob?.id,
+                    jobTitle: activeJob?.title,
+                    team: activeJob?.team,
+                    slots: latest.scheduleRequest?.slots || [],
+                    bookingUrl,
+                    message: buildInterviewRequestMessage({
+                        candidateName: latest.name,
+                        companyName: templateSettings.companyName,
+                        jobTitle: activeJob?.title,
+                        slots: latest.scheduleRequest?.slots || [],
+                        bookingUrl,
+                        templateSettings
+                    })
+                };
+
+                if (!endpoint) {
+                    alert('발송 상태만 기록했습니다.\nwindow.RECRUIT_NOTI_CONFIG.notificationEndpoint 설정 후 실제 카카오 발송을 연결할 수 있습니다.');
+                    return;
+                }
+
+                try {
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const result = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(result?.error || '알림 발송 요청 실패');
+                    }
+                    alert(`알림 발송 요청 완료\n상태: ${result?.status || 'queued'}`);
+                } catch (error) {
+                    console.error('알림 발송 요청 실패:', error);
+                    alert(`발송 상태는 기록했지만 백엔드 호출은 실패했습니다.\n${error.message || error}`);
+                }
+            };
+            const confirmCandidateSchedule = async () => {
+                if (!activeJob?.id || !selectedCandidate?.id) return;
+                const selectedSlot = getSelectedSlot(selectedCandidate);
+                if (!selectedSlot?.datetime) {
+                    alert('지원자가 선택한 일정이 없습니다.');
+                    return;
+                }
+                setBookingActionBusy(true);
+                const nowIso = new Date().toISOString();
+                const updatedCandidates = await updateCandidatesAtomic(activeJob.id, (currentCandidates) =>
+                    currentCandidates.map((candidate) => {
+                        if (candidate.id !== selectedCandidate.id) return candidate;
+                        const currentRequest = candidate.scheduleRequest || {};
+                        return {
+                            ...candidate,
+                            interviewDate: selectedSlot.datetime,
+                            scheduleRequest: {
+                                ...currentRequest,
+                                status: 'confirmed',
+                                confirmedAt: nowIso
+                            }
+                        };
+                    })
+                );
+                setBookingActionBusy(false);
+                if (!updatedCandidates) return;
+                const latest = updatedCandidates.find((candidate) => candidate.id === selectedCandidate.id);
+                if (latest) {
+                    setSelectedCandidate(latest);
+                    alert('지원자 선택 일정이 확정되었습니다.');
+                }
+            };
+
+            const handleDeleteJob = async (id, e) => {
+                e.stopPropagation();
+                if (window.confirm('정말 삭제하시겠습니까?')) {
+                    await firestoreWrite(id, { deletedAt: Date.now(), deletedBy: user?.uid || 'anonymous' });
+                    if(activeJobId === id) { setViewMode('list'); setActiveJobId(null); }
+                }
+            };
+            const handleRestoreJob = async (id) => {
+                await firestoreWrite(id, { deletedAt: null, deletedBy: null });
+                alert('휴지통에서 복구되었습니다.');
+            };
+            const handleHardDeleteJob = async (id) => {
+                if (!window.confirm('영구 삭제하면 복구할 수 없습니다. 계속할까요?')) return;
+                await firestoreWrite(id, null, true);
+                alert('영구 삭제되었습니다.');
+            };
+            const exportWeeklyReportCsv = () => {
+                const stageCounts = STAGES.map((stage) => {
+                    const count = liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => c.status === stage).length, 0);
+                    return { stage, count };
+                });
+                const totals = {
+                    totalJobs: liveJobs.length,
+                    activeJobs: activeJobs.length,
+                    closedJobs: closedJobs.length,
+                    totalCandidates: liveJobs.reduce((acc, j) => acc + (j.candidates || []).length, 0),
+                    hired: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => c.status === '최종합격').length, 0),
+                    inInterview: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => String(c.status).includes('면접')).length, 0)
+                };
+                const hireRate = totals.totalCandidates > 0 ? ((totals.hired / totals.totalCandidates) * 100).toFixed(1) : '0.0';
+                const rows = [['섹션', '항목', '값1', '값2', '값3', '값4']];
+                rows.push(['요약', '생성일시', new Date().toLocaleString('ko-KR'), '', '', '']);
+                rows.push(['요약', '전체 공고', totals.totalJobs, '', '', '']);
+                rows.push(['요약', '진행중/마감', totals.activeJobs, totals.closedJobs, '', '']);
+                rows.push(['요약', '전체 지원자', totals.totalCandidates, '', '', '']);
+                rows.push(['요약', '합격자/합격률', totals.hired, `${hireRate}%`, '', '']);
+                rows.push(['요약', '면접 진행중', totals.inInterview, '', '', '']);
+                rows.push(['리스크', '오늘 면접', scheduleAlerts.todayInterviews.length, '', '', '']);
+                rows.push(['리스크', '면접일 미설정', scheduleAlerts.missingInterviewSchedule.length, '', '', '']);
+                rows.push(['리스크', '7일 이내 마감', scheduleAlerts.withinWeekDeadlines.length, '', '', '']);
+                rows.push(['파이프라인', '단계', '인원', '', '', '']);
+                stageCounts.forEach((s) => rows.push(['파이프라인', s.stage, s.count, '', '', '']));
+                rows.push(['공고상세', '공고명', '부서', '기간', '지원자', '합격']);
+                activeJobs.forEach((j) => {
+                    const cands = j.candidates || [];
+                    rows.push([
+                        '공고상세',
+                        j.title || '',
+                        j.team || '',
+                        `${j.period?.start || ''} ~ ${j.period?.end || ''}`,
+                        cands.length,
+                        cands.filter((c) => c.status === '최종합격').length
+                    ]);
+                });
+                rows.push(['리스크상세', '유형', '공고', '지원자', '상태', '일시']);
+                scheduleAlerts.todayInterviews.forEach((x) => {
+                    rows.push(['리스크상세', '오늘면접', x.jobTitle || '', x.name || '', '', x.time || '']);
+                });
+                scheduleAlerts.missingInterviewSchedule.forEach((x) => {
+                    rows.push(['리스크상세', '면접일미설정', x.jobTitle || '', x.name || '', x.status || '', '']);
+                });
+                scheduleAlerts.withinWeekDeadlines.forEach((x) => {
+                    rows.push(['리스크상세', '마감임박', x.title || '', '', '', x.period?.end || '']);
+                });
+                const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
+                const bom = '\uFEFF';
+                const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const dateLabel = toDateOnly(new Date()).replace(/-/g, '');
+                a.href = url;
+                a.download = `채용_주간요약_${dateLabel}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+            const printWeeklySummary = () => {
+                const stageCounts = STAGES.map((stage) => {
+                    const count = liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => c.status === stage).length, 0);
+                    return { stage, count };
+                });
+                const totals = {
+                    totalJobs: liveJobs.length,
+                    activeJobs: activeJobs.length,
+                    closedJobs: closedJobs.length,
+                    totalCandidates: liveJobs.reduce((acc, j) => acc + (j.candidates || []).length, 0),
+                    hired: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => c.status === '최종합격').length, 0),
+                    inInterview: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => String(c.status).includes('면접')).length, 0)
+                };
+                const hireRate = totals.totalCandidates > 0 ? ((totals.hired / totals.totalCandidates) * 100).toFixed(1) : '0.0';
+                const win = window.open('', '_blank', 'width=980,height=720');
+                if (!win) return alert('팝업이 차단되어 인쇄 창을 열 수 없습니다.');
+                const html = `
+                    <html><head><meta charset="utf-8"><title>채용 주간 요약</title>
+                    <style>
+                        body{font-family:Pretendard,Apple SD Gothic Neo,sans-serif;padding:28px;color:#0f172a;}
+                        h1{margin:0 0 8px 0;} .sub{color:#64748b;margin-bottom:20px;}
+                        .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;}
+                        .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;}
+                        .card{border:1px solid #e2e8f0;border-radius:12px;padding:14px;}
+                        table{width:100%;border-collapse:collapse;font-size:13px;}
+                        th,td{border:1px solid #e2e8f0;padding:8px;text-align:left;}
+                        th{background:#f8fafc;}
+                        h3{margin:18px 0 8px 0;}
+                    </style></head><body>
+                    <h1>채용 주간 요약</h1>
+                    <div class="sub">${new Date().toLocaleString('ko-KR')}</div>
+                    <div class="grid">
+                        <div class="card"><strong>진행중 공고</strong><div>${totals.activeJobs}건</div></div>
+                        <div class="card"><strong>전체 지원자</strong><div>${totals.totalCandidates}명</div></div>
+                        <div class="card"><strong>합격자/합격률</strong><div>${totals.hired}명 / ${hireRate}%</div></div>
+                    </div>
+                    <div class="grid4">
+                        <div class="card"><strong>오늘 면접</strong><div>${scheduleAlerts.todayInterviews.length}건</div></div>
+                        <div class="card"><strong>면접일 미설정</strong><div>${scheduleAlerts.missingInterviewSchedule.length}건</div></div>
+                        <div class="card"><strong>7일 내 마감</strong><div>${scheduleAlerts.withinWeekDeadlines.length}건</div></div>
+                        <div class="card"><strong>면접 진행중</strong><div>${totals.inInterview}명</div></div>
+                    </div>
+                    <h3>파이프라인 단계별 인원</h3>
+                    <table><thead><tr><th>단계</th><th>인원</th></tr></thead><tbody>
+                    ${stageCounts.map((s) => `<tr><td>${escapeHtml(s.stage)}</td><td>${s.count}</td></tr>`).join('')}
+                    </tbody></table>
+                    <h3>7일 이내 마감 공고</h3>
+                    <table><thead><tr><th>공고</th><th>마감일</th><th>부서</th></tr></thead><tbody>
+                    ${scheduleAlerts.withinWeekDeadlines.map((j) => `<tr><td>${escapeHtml(j.title || '')}</td><td>${escapeHtml(j.period?.end || '')}</td><td>${escapeHtml(j.team || '')}</td></tr>`).join('') || '<tr><td colspan="3">데이터 없음</td></tr>'}
+                    </tbody></table>
+                    <h3>진행중 공고 상세</h3>
+                    <table><thead><tr><th>공고</th><th>부서</th><th>기간</th><th>지원자</th><th>합격</th></tr></thead><tbody>
+                    ${activeJobs.map((j) => {
+                        const cands = j.candidates || [];
+                        const hired = cands.filter((c) => c.status === '최종합격').length;
+                        return `<tr><td>${escapeHtml(j.title || '')}</td><td>${escapeHtml(j.team || '')}</td><td>${escapeHtml(`${j.period?.start || ''} ~ ${j.period?.end || ''}`)}</td><td>${cands.length}</td><td>${hired}</td></tr>`;
+                    }).join('') || '<tr><td colspan="5">데이터 없음</td></tr>'}
+                    </tbody></table>
+                    <h3>즉시 조치 필요</h3>
+                    <table><thead><tr><th>유형</th><th>공고</th><th>지원자</th><th>상태/일시</th></tr></thead><tbody>
+                    ${scheduleAlerts.todayInterviews.map((x) => `<tr><td>오늘 면접</td><td>${escapeHtml(x.jobTitle || '')}</td><td>${escapeHtml(x.name || '')}</td><td>${escapeHtml(x.time || '')}</td></tr>`).join('')}
+                    ${scheduleAlerts.missingInterviewSchedule.map((x) => `<tr><td>면접일 미설정</td><td>${escapeHtml(x.jobTitle || '')}</td><td>${escapeHtml(x.name || '')}</td><td>${escapeHtml(x.status || '')}</td></tr>`).join('')}
+                    ${scheduleAlerts.todayInterviews.length === 0 && scheduleAlerts.missingInterviewSchedule.length === 0 ? '<tr><td colspan="4">즉시 조치 항목 없음</td></tr>' : ''}
+                    </tbody></table>
+                    </body></html>`;
+                win.document.open();
+                win.document.write(html);
+                win.document.close();
+                win.focus();
+                win.print();
+            };
+            const printExecutiveOnePage = () => {
+                const totals = {
+                    activeJobs: activeJobs.length,
+                    totalCandidates: liveJobs.reduce((acc, j) => acc + (j.candidates || []).length, 0),
+                    hired: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => c.status === '최종합격').length, 0),
+                    inInterview: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => String(c.status).includes('면접')).length, 0)
+                };
+                const hireRate = totals.totalCandidates > 0 ? ((totals.hired / totals.totalCandidates) * 100).toFixed(1) : '0.0';
+                const stageCounts = STAGES.map((stage) => ({
+                    stage,
+                    count: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => c.status === stage).length, 0)
+                }));
+                const riskStats = [
+                    { label: '오늘 면접', count: scheduleAlerts.todayInterviews.length, color: '#2563eb' },
+                    { label: '면접일 미설정', count: scheduleAlerts.missingInterviewSchedule.length, color: '#d97706' },
+                    { label: '7일 내 마감', count: scheduleAlerts.withinWeekDeadlines.length, color: '#dc2626' }
+                ];
+                const stagePalette = ['#2563eb', '#7c3aed', '#d97706', '#db2777', '#16a34a', '#64748b'];
+                const riskPalette = ['#2563eb', '#d97706', '#dc2626'];
+                const buildDonutSvg = (items, colorResolver, centerText) => {
+                    const size = 170;
+                    const cx = 85;
+                    const cy = 85;
+                    const r = 56;
+                    const stroke = 26;
+                    const c = 2 * Math.PI * r;
+                    const total = Math.max(1, items.reduce((sum, it) => sum + Number(it.count || 0), 0));
+                    let acc = 0;
+                    const segments = items.map((it, idx) => {
+                        const value = Number(it.count || 0);
+                        const len = (value / total) * c;
+                        const offset = -acc;
+                        acc += len;
+                        return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${colorResolver(it, idx)}" stroke-width="${stroke}" stroke-dasharray="${len} ${Math.max(c - len, 0)}" stroke-dashoffset="${offset}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="butt"></circle>`;
+                    }).join('');
+                    return `
+                        <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
+                            <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#e2e8f0" stroke-width="${stroke}"></circle>
+                            ${segments}
+                            <circle cx="${cx}" cy="${cy}" r="34" fill="white"></circle>
+                            <text x="${cx}" y="${cy - 2}" text-anchor="middle" style="font-size:18px;font-weight:800;fill:#0f172a;">${escapeHtml(centerText)}</text>
+                            <text x="${cx}" y="${cy + 15}" text-anchor="middle" style="font-size:11px;fill:#64748b;">TOTAL</text>
+                        </svg>`;
+                };
+                const stageTotal = stageCounts.reduce((sum, s) => sum + s.count, 0);
+                const riskTotal = riskStats.reduce((sum, r) => sum + r.count, 0);
+                const stageDonut = buildDonutSvg(stageCounts, (_, i) => stagePalette[i % stagePalette.length], `${stageTotal}`);
+                const riskDonut = buildDonutSvg(riskStats, (_, i) => riskPalette[i % riskPalette.length], `${riskTotal}`);
+                const riskItems = [
+                    ...scheduleAlerts.todayInterviews.map((x) => ({ type: '오늘 면접', job: x.jobTitle || '-', who: x.name || '-', when: x.time || '-' })),
+                    ...scheduleAlerts.missingInterviewSchedule.map((x) => ({ type: '면접일 미설정', job: x.jobTitle || '-', who: x.name || '-', when: x.status || '-' })),
+                    ...scheduleAlerts.withinWeekDeadlines.map((x) => ({ type: '마감임박', job: x.title || '-', who: '-', when: x.period?.end || '-' }))
+                ].slice(0, 5);
+                const focusJobs = [...activeJobs]
+                    .sort((a, b) => ((b.candidates || []).length - (a.candidates || []).length))
+                    .slice(0, 8)
+                    .map((j) => {
+                        const cands = j.candidates || [];
+                        const interview = cands.filter((c) => String(c.status).includes('면접')).length;
+                        const hired = cands.filter((c) => c.status === '최종합격').length;
+                        return {
+                            title: j.title || '-',
+                            team: j.team || '-',
+                            period: `${j.period?.start || ''} ~ ${j.period?.end || ''}`,
+                            total: cands.length,
+                            interview,
+                            hired
+                        };
+                    });
+                const actions = [
+                    { label: '오늘 면접 대상 확정 및 일정 리마인드', value: `${scheduleAlerts.todayInterviews.length}건` },
+                    { label: '면접일 미설정 지원자 일정 등록', value: `${scheduleAlerts.missingInterviewSchedule.length}건` },
+                    { label: '7일 내 마감 공고 우선 검토', value: `${scheduleAlerts.withinWeekDeadlines.length}건` }
+                ];
+
+                const win = window.open('', '_blank', 'width=1100,height=780');
+                if (!win) return alert('팝업이 차단되어 인쇄 창을 열 수 없습니다.');
+                const html = `
+                    <html><head><meta charset="utf-8"><title>경영진 1페이지 보고서</title>
+                    <style>
+                        @page { size: A4 portrait; margin: 8mm; }
+                        *{box-sizing:border-box;}
+                        body{font-family:Pretendard,Apple SD Gothic Neo,sans-serif;margin:0;color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+                        .sheet{width:100%;min-height:277mm;padding:3mm;}
+                        h1{margin:0 0 2px 0;font-size:24px;} .sub{color:#64748b;margin-bottom:10px;font-size:12px;}
+                        .kpi{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:8px 0 10px 0;}
+                        .card{border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;}
+                        .label{font-size:11px;color:#64748b;margin-bottom:4px;} .value{font-size:20px;font-weight:800;line-height:1.1;}
+                        .row{display:grid;grid-template-columns:1fr;gap:8px;}
+                        .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;}
+                        .row3{display:grid;grid-template-columns:1fr;gap:10px;margin-top:10px;}
+                        table{width:100%;border-collapse:collapse;font-size:11px;}
+                        th,td{border:1px solid #e2e8f0;padding:6px;text-align:left;} th{background:#f8fafc;}
+                        h3{margin:0 0 6px 0;font-size:14px;}
+                        .chart{border:1px solid #e2e8f0;border-radius:10px;padding:8px 10px;}
+                        .chart-wrap{display:flex;align-items:center;gap:10px;}
+                        .legend{flex:1;}
+                        .legend-item{display:grid;grid-template-columns:14px 1fr 44px;align-items:center;gap:7px;margin:4px 0;font-size:11px;}
+                        .dot{width:10px;height:10px;border-radius:999px;display:inline-block;}
+                    </style></head><body><div class="sheet">
+                    <h1>채용 경영진 1페이지 보고서</h1>
+                    <div class="sub">기준시점: ${new Date().toLocaleString('ko-KR')}</div>
+                    <div class="kpi">
+                        <div class="card"><div class="label">진행중 공고</div><div class="value">${totals.activeJobs}</div></div>
+                        <div class="card"><div class="label">전체 지원자</div><div class="value">${totals.totalCandidates}</div></div>
+                        <div class="card"><div class="label">합격자</div><div class="value">${totals.hired}</div></div>
+                        <div class="card"><div class="label">합격률</div><div class="value">${hireRate}%</div></div>
+                        <div class="card"><div class="label">면접 진행중</div><div class="value">${totals.inInterview}</div></div>
+                    </div>
+                    <div class="row">
+                        <div>
+                            <h3>Top Risk 5</h3>
+                            <table>
+                                <thead><tr><th>유형</th><th>공고</th><th>대상</th><th>일정/상태</th></tr></thead>
+                                <tbody>
+                                    ${riskItems.map((r) => `<tr><td>${escapeHtml(r.type)}</td><td>${escapeHtml(r.job)}</td><td>${escapeHtml(r.who)}</td><td>${escapeHtml(r.when)}</td></tr>`).join('') || '<tr><td colspan="4">리스크 없음</td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div>
+                            <h3>이번주 액션 3</h3>
+                            <table>
+                                <thead><tr><th>액션</th><th>건수</th></tr></thead>
+                                <tbody>
+                                    ${actions.map((a) => `<tr><td>${escapeHtml(a.label)}</td><td>${escapeHtml(a.value)}</td></tr>`).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="row2">
+                        <div class="chart">
+                            <h3>파이프라인 단계별 분포</h3>
+                            <div class="chart-wrap">
+                                ${stageDonut}
+                                <div class="legend">
+                                    ${stageCounts.map((s, i) => `<div class="legend-item"><span class="dot" style="background:${stagePalette[i % stagePalette.length]}"></span><span>${escapeHtml(s.stage)}</span><span style="text-align:right">${s.count}</span></div>`).join('')}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chart">
+                            <h3>핵심 리스크 분포</h3>
+                            <div class="chart-wrap">
+                                ${riskDonut}
+                                <div class="legend">
+                                    ${riskStats.map((r, i) => `<div class="legend-item"><span class="dot" style="background:${riskPalette[i % riskPalette.length]}"></span><span>${escapeHtml(r.label)}</span><span style="text-align:right">${r.count}</span></div>`).join('')}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row3">
+                        <div class="chart">
+                            <h3>핵심 공고 포커스 (지원자 많은 순)</h3>
+                            <table>
+                                <thead><tr><th>공고</th><th>부서</th><th>기간</th><th>지원자</th><th>면접중</th><th>합격</th></tr></thead>
+                                <tbody>
+                                    ${focusJobs.map((j) => `<tr><td>${escapeHtml(j.title)}</td><td>${escapeHtml(j.team)}</td><td>${escapeHtml(j.period)}</td><td>${j.total}</td><td>${j.interview}</td><td>${j.hired}</td></tr>`).join('') || '<tr><td colspan="6">데이터 없음</td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    </div></body></html>`;
+                win.document.open();
+                win.document.write(html);
+                win.document.close();
+                win.focus();
+                win.print();
+            };
+
+            const handleEarlyClose = async (jobId) => {
+                if(window.confirm('이 공고를 조기 마감하시겠습니까?\n마감일이 어제로 설정되어 "마감된 공고"로 이동됩니다.')) {
+                    const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+                    const formattedDate = yesterday.toISOString().split('T')[0];
+                    const jobToUpdate = jobs.find(j => j.id === jobId);
+                    if(jobToUpdate) {
+                        await firestoreWrite(jobId, { ...jobToUpdate, period: { ...jobToUpdate.period, end: formattedDate } });
+                        alert('공고가 조기 마감되었습니다.');
+                        if(activeJobId === jobId) { setViewMode('list'); setActiveJobId(null); }
+                    }
+                }
+            };
+
+            const handleDeleteCandidate = async (candidateId, e) => {
+                e.stopPropagation();
+                if (window.confirm('이 지원자를 정말 삭제하시겠습니까?')) {
+                    if (!activeJob?.id) return;
+                    await updateCandidatesAtomic(activeJob.id, (currentCandidates) =>
+                        currentCandidates.filter(c => c.id !== candidateId)
+                    );
+                    if (selectedCandidate && selectedCandidate.id === candidateId) {
+                        setIsCandidateModalOpen(false); setSelectedCandidate(null);
+                    }
+                }
+            };
+
+            const openCreateModal = () => { setEditingJob(null); setIsCreateOpen(true); };
+            const openEditModal = (job, e) => { e.stopPropagation(); setEditingJob(job); setIsCreateOpen(true); };
+
+            const moveCandidate = async (candidateId, direction) => {
+                if (!activeJob?.id) return;
+                await updateCandidatesAtomic(activeJob.id, (currentCandidates) =>
+                    currentCandidates.map(c => {
+                        if (c.id !== candidateId) return c;
+                        const nextIndex = STAGES.indexOf(c.status) + direction;
+                        return (nextIndex >= 0 && nextIndex < STAGES.length) ? { ...c, status: STAGES[nextIndex] } : c;
+                    })
+                );
+            };
+
+            const CalendarView = () => {
+                const [currentDate, setCurrentDate] = useState(new Date());
+                const events = useMemo(() => {
+                    const all = [];
+                    liveJobs.forEach(job => { (job.candidates || []).forEach(c => { if (c.interviewDate) all.push({ ...c, jobTitle: job.title, jobId: job.id }); }); });
+                    return all;
+                }, [liveJobs]);
+                const getDaysInMonth = (date) => {
+                    const year = date.getFullYear(); const month = date.getMonth();
+                    return { days: new Date(year, month + 1, 0).getDate(), firstDay: new Date(year, month, 1).getDay() };
+                };
+                const { days, firstDay } = getDaysInMonth(currentDate);
+                const monthName = currentDate.toLocaleString('ko-KR', { year: 'numeric', month: 'long' });
+                const handlePrevMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+                const handleNextMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+                const handleCandidateClick = (candidate) => { setActiveJobId(candidate.jobId); setSelectedCandidate(candidate); setIsCandidateModalOpen(true); };
+
+                return (
+                    <div className="p-8 h-full flex flex-col animate-fade-in-up">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Icons.Calendar className="w-6 h-6 text-brand-600" /> 면접 일정 캘린더</h2>
+                            <div className="flex items-center gap-4">
+                                <button onClick={handlePrevMonth} className="p-2 hover:bg-gray-100 rounded-full"><Icons.ChevronLeft className="w-5 h-5" /></button>
+                                <span className="text-xl font-bold text-gray-700">{monthName}</span>
+                                <button onClick={handleNextMonth} className="p-2 hover:bg-gray-100 rounded-full"><Icons.ChevronRight className="w-5 h-5" /></button>
+                            </div>
+                        </div>
+                        <div className="flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+                            <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+                                {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (<div key={d} className={`py-3 text-center text-sm font-bold ${i === 0 ? 'text-red-500' : 'text-gray-600'}`}>{d}</div>))}
+                            </div>
+                            <div className="grid grid-cols-7 flex-1 auto-rows-fr">
+                                {[...Array(firstDay)].map((_, i) => <div key={`empty-${i}`} className="border-b border-r border-gray-100 bg-gray-50/30"></div>)}
+                                {[...Array(days)].map((_, i) => {
+                                    const day = i + 1;
+                                    const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth()+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                                    const dayEvents = events.filter(e => e.interviewDate.startsWith(dateStr)).sort((a,b) => a.interviewDate.localeCompare(b.interviewDate));
+                                    const isToday = new Date().toDateString() === new Date(currentDate.getFullYear(), currentDate.getMonth(), day).toDateString();
+                                    return (
+                                        <div key={day} className={`border-b border-r border-gray-100 p-2 min-h-[100px] relative hover:bg-gray-50 transition-colors ${isToday ? 'bg-blue-50/50' : ''}`}>
+                                            <div className={`text-sm font-medium mb-1 ${isToday ? 'text-brand-600 font-bold' : 'text-gray-700'}`}>{day}</div>
+                                            <div className="space-y-1">
+                                                {dayEvents.map((ev, idx) => (
+                                                    <button key={idx} onClick={() => handleCandidateClick(ev)} className="w-full text-left bg-white border border-brand-100 rounded px-1.5 py-1 text-xs shadow-sm hover:shadow-md hover:border-brand-300 transition-all flex flex-col group">
+                                                        <div className="flex justify-between items-center"><span className="font-bold text-brand-700">{ev.interviewDate.split('T')[1]}</span><span className={`text-[10px] px-1 rounded ${ev.status === '1차면접' ? 'bg-orange-100 text-orange-700' : 'bg-purple-100 text-purple-700'}`}>{ev.status}</span></div>
+                                                        <div className="truncate text-gray-700 font-medium">{ev.name}</div>
+                                                        <div className="truncate text-gray-400 text-[10px]">{ev.jobTitle}</div>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const BookingPage = () => {
+                const params = new URLSearchParams(window.location.search);
+                const jobId = params.get('jobId') || '';
+                const candidateId = params.get('candidateId') || '';
+                const token = params.get('token') || '';
+                const job = liveJobs.find((item) => item.id === jobId);
+                const candidate = (job?.candidates || []).find((item) => item.id === candidateId);
+                const scheduleRequest = candidate?.scheduleRequest || null;
+                const slots = (scheduleRequest?.slots || []).filter((slot) => slot.datetime);
+                const selectedSlot = getSelectedSlot(candidate);
+                const isValid = !!job && !!candidate && !!token && scheduleRequest?.token === token;
+
+                const submitCandidateChoice = async (slotId) => {
+                    if (!job?.id || !candidate?.id || !token) return;
+                    setBookingActionBusy(true);
+                    const nowIso = new Date().toISOString();
+                    await updateCandidatesAtomic(job.id, (currentCandidates) =>
+                        currentCandidates.map((currentCandidate) => {
+                            if (currentCandidate.id !== candidate.id) return currentCandidate;
+                            if (currentCandidate.scheduleRequest?.token !== token) return currentCandidate;
+                            if (currentCandidate.scheduleRequest?.status === 'confirmed') return currentCandidate;
+                            return {
+                                ...currentCandidate,
+                                scheduleRequest: {
+                                    ...currentCandidate.scheduleRequest,
+                                    status: 'responded',
+                                    selectedSlotId: slotId,
+                                    respondedAt: nowIso
+                                }
+                            };
+                        })
+                    );
+                    setBookingActionBusy(false);
+                };
+
+                return (
+                    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+                        <div className="w-full max-w-2xl bg-white border border-slate-200 shadow-xl rounded-3xl overflow-hidden">
+                            <div className="bg-slate-900 text-white px-8 py-6">
+                                <div className="text-sm text-brand-300 font-semibold mb-2">면접 일정 응답</div>
+                                <h1 className="text-2xl font-bold">면접 가능 시간을 선택해주세요</h1>
+                                <p className="text-slate-300 text-sm mt-2">지원자가 선택하면 담당자가 확인 후 최종 확정합니다.</p>
+                            </div>
+                            <div className="p-8">
+                                {!isValid && (
+                                    <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-700">
+                                        유효하지 않거나 만료된 예약 링크입니다. 담당자에게 다시 요청해주세요.
+                                    </div>
+                                )}
+                                {isValid && (
+                                    <div className="space-y-6">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                                <div className="text-xs font-bold text-slate-500 mb-1">지원자</div>
+                                                <div className="font-bold text-slate-900">{candidate.name}</div>
+                                                <div className="text-sm text-slate-500 mt-1">{candidate.phone || candidate.email || '-'}</div>
+                                            </div>
+                                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                                <div className="text-xs font-bold text-slate-500 mb-1">채용 공고</div>
+                                                <div className="font-bold text-slate-900">{job.title}</div>
+                                                <div className="text-sm text-slate-500 mt-1">{job.team || '-'}</div>
+                                            </div>
+                                        </div>
+
+                                        {scheduleRequest?.status === 'confirmed' && selectedSlot && (
+                                            <div className="rounded-2xl border border-green-200 bg-green-50 p-5">
+                                                <div className="text-green-800 font-bold mb-2">일정이 최종 확정되었습니다.</div>
+                                                <div className="text-green-700">{formatDateTimeLabel(selectedSlot.datetime)}</div>
+                                            </div>
+                                        )}
+
+                                        {scheduleRequest?.status !== 'confirmed' && (
+                                            <>
+                                                <div>
+                                                    <h2 className="text-lg font-bold text-slate-900 mb-3">가능한 일정</h2>
+                                                    <div className="space-y-3">
+                                                        {slots.map((slot) => {
+                                                            const checked = scheduleRequest?.selectedSlotId === slot.id;
+                                                            return (
+                                                                <button
+                                                                    key={slot.id}
+                                                                    type="button"
+                                                                    disabled={bookingActionBusy}
+                                                                    onClick={() => submitCandidateChoice(slot.id)}
+                                                                    className={`w-full text-left rounded-2xl border px-4 py-4 transition-all ${checked ? 'border-brand-500 bg-brand-50 shadow-sm' : 'border-slate-200 hover:border-brand-300 hover:bg-slate-50'} ${bookingActionBusy ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                                                >
+                                                                    <div className="flex items-center justify-between gap-3">
+                                                                        <div>
+                                                                            <div className="font-bold text-slate-900">{formatDateTimeLabel(slot.datetime)}</div>
+                                                                            <div className="text-sm text-slate-500 mt-1">선택 후 담당자 확인 단계로 넘어갑니다.</div>
+                                                                        </div>
+                                                                        <div className={`text-xs font-bold px-2 py-1 rounded-full ${checked ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                                                            {checked ? '선택됨' : '선택'}
+                                                                        </div>
+                                                                    </div>
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+
+                                                {scheduleRequest?.status === 'responded' && selectedSlot && (
+                                                    <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5">
+                                                        <div className="text-blue-800 font-bold mb-2">응답이 접수되었습니다.</div>
+                                                        <div className="text-blue-700">선택한 일정: {formatDateTimeLabel(selectedSlot.datetime)}</div>
+                                                        <div className="text-xs text-blue-600 mt-2">담당자가 최종 확인하면 확정됩니다.</div>
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const KakaoTemplateSettingsPage = () => {
+                const previewSlots = [
+                    { id: 'preview-1', datetime: '2026-04-03T10:00' },
+                    { id: 'preview-2', datetime: '2026-04-03T14:00' },
+                    { id: 'preview-3', datetime: '2026-04-04T16:00' }
+                ];
+                const saveTemplateSettings = () => {
+                    setTemplateSettings(templateDraft);
+                    try {
+                        localStorage.setItem(TEMPLATE_SETTINGS_KEY, JSON.stringify(templateDraft));
+                        alert('카카오톡 발송 템플릿 설정이 저장되었습니다.');
+                    } catch (error) {
+                        console.warn('템플릿 설정 저장 실패', error);
+                        alert('브라우저 저장소에 설정을 저장하지 못했습니다.');
+                    }
+                };
+                const resetTemplateDraft = () => setTemplateDraft({ ...DEFAULT_TEMPLATE_SETTINGS });
+                const previewMessage = buildInterviewRequestMessage({
+                    candidateName: templateDraft.previewCandidateName,
+                    companyName: templateDraft.companyName,
+                    jobTitle: templateDraft.previewJobTitle,
+                    slots: previewSlots,
+                    bookingUrl: templateDraft.previewBookingUrl,
+                    templateSettings: templateDraft
+                });
+
+                return (
+                    <div className="p-8 h-full overflow-y-auto custom-scrollbar pb-20 space-y-8 animate-fade-in-up">
+                        <div>
+                            <h2 className="text-3xl font-bold text-gray-900">카카오톡 발송 템플릿 설정</h2>
+                            <p className="text-gray-500 mt-2">좌측 메뉴에서 기본 발송 문구를 관리합니다. 여기서 수정한 내용이 발송 미리보기와 실제 발송 요청에 반영됩니다.</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                            <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-5">
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-800">기본 문구 설정</h3>
+                                    <p className="text-sm text-gray-500 mt-1">변수는 본문 템플릿에서 <code>{'{{candidateName}}'}</code> 형태로 사용할 수 있습니다.</p>
+                                </div>
+                                <div className="grid grid-cols-1 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-bold mb-1">회사명/발신명</label>
+                                        <input
+                                            value={templateDraft.companyName}
+                                            onChange={(e) => setTemplateDraft((prev) => ({ ...prev, companyName: e.target.value }))}
+                                            className="w-full border p-2.5 rounded-lg"
+                                            placeholder="예: 유진테크 채용팀"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold mb-1">안내 문구</label>
+                                        <input
+                                            value={templateDraft.introLine}
+                                            onChange={(e) => setTemplateDraft((prev) => ({ ...prev, introLine: e.target.value }))}
+                                            className="w-full border p-2.5 rounded-lg"
+                                            placeholder="예: 면접 가능 시간 안내드립니다."
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold mb-1">행동 요청 문구</label>
+                                        <input
+                                            value={templateDraft.actionLine}
+                                            onChange={(e) => setTemplateDraft((prev) => ({ ...prev, actionLine: e.target.value }))}
+                                            className="w-full border p-2.5 rounded-lg"
+                                            placeholder="예: 가능한 시간을 선택해주세요."
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold mb-1">하단 안내 문구</label>
+                                        <input
+                                            value={templateDraft.footerLine}
+                                            onChange={(e) => setTemplateDraft((prev) => ({ ...prev, footerLine: e.target.value }))}
+                                            className="w-full border p-2.5 rounded-lg"
+                                            placeholder="예: 본 메시지는 채용 일정 조율 안내입니다."
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold mb-1">전체 템플릿 본문</label>
+                                        <textarea
+                                            value={templateDraft.templateBody}
+                                            onChange={(e) => setTemplateDraft((prev) => ({ ...prev, templateBody: e.target.value }))}
+                                            rows="12"
+                                            className="w-full border p-3 rounded-lg font-mono text-sm"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 space-y-1">
+                                    <div className="font-bold text-slate-800 mb-1">사용 가능한 변수</div>
+                                    <div>{'{{candidateName}}, {{companyName}}, {{jobTitle}}, {{jobTitleBracket}}'}</div>
+                                    <div>{'{{introLine}}, {{slotLines}}, {{actionLine}}, {{bookingUrl}}, {{footerLine}}'}</div>
+                                </div>
+
+                                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-4">
+                                    <div>
+                                        <h4 className="font-bold text-emerald-900">미리보기 샘플값</h4>
+                                        <p className="text-sm text-emerald-700 mt-1">오른쪽 발송 미리보기에 표시할 샘플 데이터를 직접 바꿀 수 있습니다.</p>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-bold mb-1">샘플 지원자명</label>
+                                            <input
+                                                value={templateDraft.previewCandidateName}
+                                                onChange={(e) => setTemplateDraft((prev) => ({ ...prev, previewCandidateName: e.target.value }))}
+                                                className="w-full border p-2.5 rounded-lg"
+                                                placeholder="예: 홍길동"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold mb-1">샘플 공고명</label>
+                                            <input
+                                                value={templateDraft.previewJobTitle}
+                                                onChange={(e) => setTemplateDraft((prev) => ({ ...prev, previewJobTitle: e.target.value }))}
+                                                className="w-full border p-2.5 rounded-lg"
+                                                placeholder="예: 생산기술"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold mb-1">샘플 예약 링크</label>
+                                            <input
+                                                value={templateDraft.previewBookingUrl}
+                                                onChange={(e) => setTemplateDraft((prev) => ({ ...prev, previewBookingUrl: e.target.value }))}
+                                                className="w-full border p-2.5 rounded-lg"
+                                                placeholder="https://your-domain.example/..."
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={resetTemplateDraft}
+                                        className="px-4 py-2 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 text-sm font-semibold"
+                                    >
+                                        기본값 복원
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={saveTemplateSettings}
+                                        className="px-4 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-700 text-sm font-semibold"
+                                    >
+                                        설정 저장
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 space-y-5">
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-800">발송 미리보기</h3>
+                                    <p className="text-sm text-gray-500 mt-1">샘플 지원자 기준으로 실제 발송 문구를 즉시 확인할 수 있습니다.</p>
+                                </div>
+                                <div className="bg-yellow-50 border border-yellow-100 rounded-2xl p-5 whitespace-pre-wrap leading-6 text-sm text-slate-700">
+                                    {previewMessage}
+                                </div>
+                                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-700">
+                                    저장 버튼을 눌러야 현재 브라우저의 `localStorage`에 반영됩니다. 같은 PC/브라우저에서 계속 유지됩니다.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const AdvancedDashboard = () => {
+                const totalActive = activeJobs.length;
+                const totalCandidates = liveJobs.reduce((acc, j) => acc + (j.candidates || []).length, 0);
+                const interviewees = activeJobs.reduce((acc, j) => acc + (j.candidates || []).filter(c => c.status.includes('면접')).length, 0);
+                const hiredCount = liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter(c => c.status === '최종합격').length, 0);
+                const skillCounts = useMemo(() => {
+                    const counts = {}; liveJobs.forEach(job => (job.skills || []).forEach(skill => counts[skill] = (counts[skill] || 0) + 1));
+                    return Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 5);
+                }, [liveJobs]);
+                const recentActivities = useMemo(() => {
+                    const allCandidates = []; liveJobs.forEach(job => { (job.candidates || []).forEach(c => allCandidates.push({...c, jobTitle: job.title})); });
+                    return allCandidates.sort((a, b) => {
+                        const aTime = Number.isFinite(a.addedAtTs) ? a.addedAtTs : Date.parse(a.addedAtIso || a.addedAt || 0);
+                        const bTime = Number.isFinite(b.addedAtTs) ? b.addedAtTs : Date.parse(b.addedAtIso || b.addedAt || 0);
+                        return bTime - aTime;
+                    }).slice(0, 5);
+                }, [liveJobs]);
+                const departmentStats = useMemo(() => {
+                    const depts = {}; activeJobs.forEach(j => depts[j.team] = (depts[j.team] || 0) + (j.candidates || []).length);
+                    return Object.entries(depts).map(([name, count]) => ({name, count, total: count + 5})).slice(0,4); 
+                }, [activeJobs]);
+
+                return (
+                    <div className="space-y-8 animate-fade-in-up p-8 h-full overflow-y-auto custom-scrollbar pb-20">
+                        {permissionError && (<div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3 text-red-700 mb-4 animate-bounce"><Icons.AlertTriangle className="w-6 h-6 shrink-0" /><div><strong>Firestore 권한 오류:</strong> 데이터를 불러올 수 없습니다. Rules를 확인해주세요.</div></div>)}
+                        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-3xl font-bold text-gray-900">통합 인사이트 대시보드</h2><p className="text-gray-500 mt-2">전사 채용 현황 및 핵심 지표를 실시간으로 모니터링합니다.</p></div><div className="flex gap-2"><button onClick={exportWeeklyReportCsv} className="px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white hover:bg-gray-50">주간 CSV</button><button onClick={printWeeklySummary} className="px-3 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">요약 인쇄</button><button onClick={printExecutiveOnePage} className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800">경영진 1페이지</button></div></div>
+                        <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.AlertTriangle className="w-5 h-5 text-amber-500" /> 일정 누락/임박 알림</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                                <div className="rounded-xl border border-amber-100 bg-amber-50 p-4">
+                                    <div className="text-amber-800 font-bold mb-1">면접일 미설정</div>
+                                    <div className="text-2xl font-bold text-amber-700">{scheduleAlerts.missingInterviewSchedule.length}</div>
+                                    <div className="text-amber-700/80 mt-1">면접 단계인데 일정이 없는 지원자</div>
+                                </div>
+                                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                                    <div className="text-blue-800 font-bold mb-1">오늘 면접</div>
+                                    <div className="text-2xl font-bold text-blue-700">{scheduleAlerts.todayInterviews.length}</div>
+                                    <div className="text-blue-700/80 mt-1">당일 진행 예정 면접</div>
+                                </div>
+                                <div className="rounded-xl border border-red-100 bg-red-50 p-4">
+                                    <div className="text-red-800 font-bold mb-1">7일 이내 마감</div>
+                                    <div className="text-2xl font-bold text-red-700">{scheduleAlerts.withinWeekDeadlines.length}</div>
+                                    <div className="text-red-700/80 mt-1">채용공고 마감 임박</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                            {[{ title: '진행중 공고', value: totalActive, unit: '건', color: 'blue', icon: Icons.Briefcase }, { title: '전체 누적 지원자', value: totalCandidates, unit: '명', color: 'purple', icon: Icons.Users }, { title: '면접 진행중', value: interviewees, unit: '명', color: 'orange', icon: Icons.Activity }, { title: '누적 합격자', value: hiredCount, unit: '명', color: 'green', icon: Icons.TrendingUp }].map((kpi, i) => (
+                                <div key={i} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                                    <div className="flex justify-between items-start mb-4"><div className={`p-3 rounded-xl bg-${kpi.color}-50 text-${kpi.color}-600`}><kpi.icon className="w-6 h-6" /></div></div>
+                                    <div className="text-3xl font-bold text-gray-900">{kpi.value}<span className="text-base text-gray-400 font-normal ml-1">{kpi.unit}</span></div><div className="text-sm text-gray-500 mt-1">{kpi.title}</div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.BarChart className="w-5 h-5 text-gray-400" /> 부서별 지원 현황</h3>
+                                <div className="space-y-6">{departmentStats.length > 0 ? departmentStats.map((dept, i) => (<div key={i}><div className="flex justify-between text-sm mb-2"><span className="font-medium text-gray-700">{dept.name}</span><span className="text-gray-500">{dept.count}명</span></div><div className="h-3 w-full bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-brand-500 rounded-full animate-grow-width" style={{ '--target-width': `${(dept.count/dept.total)*100}%` }}></div></div></div>)) : <div className="text-center text-gray-400 text-sm py-4">진행 중인 공고가 없습니다.</div>}</div></div>
+                            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.Layout className="w-5 h-5 text-gray-400" /> 전체 채용 파이프라인</h3>
+                                <div className="flex items-end justify-between h-48 space-x-2">{STAGES.map((stage, i) => { const count = activeJobs.reduce((acc, j) => acc + (j.candidates || []).filter(c => c.status === stage).length, 0); const maxCount = totalCandidates || 1; const height = totalCandidates > 0 ? (count / maxCount) * 100 : 5; return (<div key={stage} className="flex-1 flex flex-col justify-end items-center group"><div className="mb-2 text-xs font-bold text-brand-600 opacity-0 group-hover:opacity-100 transition-opacity">{count}명</div><div className="w-full bg-brand-100 rounded-t-lg transition-all hover:bg-brand-400 relative group-hover:shadow-lg" style={{ height: `${Math.max(height, 5)}%` }}></div><div className="mt-3 text-xs text-gray-500 font-medium rotate-0 whitespace-nowrap">{stage}</div></div>)})}</div></div>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.Zap className="w-5 h-5 text-gray-400" /> 가장 많이 요구되는 기술 스택 (TOP 5)</h3>
+                                <div className="space-y-4">{skillCounts.map(([skill, count], i) => (<div key={i} className="flex items-center gap-4"><div className="w-24 text-sm font-medium text-gray-600 truncate">{skill}</div><div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full animate-grow-width" style={{ '--target-width': `${(count / (skillCounts[0][1] || 1)) * 100}%` }}></div></div><div className="w-8 text-right text-xs font-bold text-indigo-600">{count}건</div></div>))}{skillCounts.length === 0 && <div className="text-center text-gray-400 text-sm py-4">데이터가 충분하지 않습니다.</div>}</div></div>
+                            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.Clock className="w-5 h-5 text-gray-400" /> 실시간 지원 현황 (최근 5건)</h3>
+                                <div className="space-y-0 divide-y divide-gray-50">{recentActivities.map((log, i) => (<div key={i} className="py-4 flex items-center justify-between first:pt-0 last:pb-0"><div className="flex items-center gap-3"><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold bg-gray-100 text-gray-600`}>{log.name[0]}</div><div><div className="text-sm font-bold text-gray-800">{log.name}</div><div className="text-xs text-gray-500 truncate w-40">{log.jobTitle}</div></div></div><div className="text-right"><Badge colorClass="bg-blue-50 text-blue-600 border-blue-100">{log.status}</Badge><div className="text-xs text-gray-400 mt-1">{formatCandidateAddedAt(log)}</div></div></div>))}{recentActivities.length === 0 && <div className="text-center text-gray-400 text-sm py-4">최근 활동 내역이 없습니다.</div>}</div></div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const JobList = ({ type }) => {
+                const targetJobs = type === 'active' ? activeJobs : type === 'closed' ? closedJobs : trashJobs;
+                const isClosedView = type === 'closed';
+                const isTrashView = type === 'trash';
+                return (
+                    <div className="p-8 animate-fade-in-up h-full overflow-y-auto pb-20 custom-scrollbar">
+                         <div className="flex justify-between items-end mb-8">
+                            <div><h2 className="text-2xl font-bold text-gray-800">{isTrashView ? '휴지통' : isClosedView ? '마감된 공고 아카이브' : '진행 중인 채용 공고'}</h2><p className="text-gray-500 mt-1">{isTrashView ? '삭제된 공고는 30일 후 자동 영구삭제됩니다.' : isClosedView ? '기간이 만료된 공고를 조회하고 관리합니다.' : '현재 지원자를 모집 중인 공고를 관리합니다.'}</p></div>
+                            {!isClosedView && !isTrashView && (<button onClick={openCreateModal} className="bg-brand-600 hover:bg-brand-700 text-white px-5 py-2.5 rounded-lg font-medium flex items-center gap-2 shadow-lg shadow-brand-500/20 transition-all"><Icons.Plus className="w-5 h-5" /> 새 공고 만들기</button>)}
+                        </div>
+                        {targetJobs.length === 0 ? (<div className="flex flex-col items-center justify-center h-64 text-gray-400 border-2 border-dashed border-gray-200 rounded-xl"><Icons.Briefcase className="w-12 h-12 mb-4 text-gray-300" /><span className="text-lg font-medium">{isTrashView ? '휴지통이 비어 있습니다.' : isClosedView ? '마감된 공고가 없습니다.' : '진행 중인 공고가 없습니다.'}</span></div>) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {targetJobs.map(job => {
+                                    const dday = job.period ? getDday(job.period.end) : '-';
+                                    return (
+                                        <div key={job.id} onClick={() => { if (!isTrashView) { setActiveJobId(job.id); setViewMode('detail'); } }} className={`bg-white rounded-xl border p-6 ${isTrashView ? '' : 'cursor-pointer'} hover:shadow-lg transition-all group relative ${isClosedView ? 'border-gray-200 bg-gray-50' : 'border-gray-200 hover:border-brand-300'}`}>
+                                            <div className="absolute top-4 right-4 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                                {!isClosedView && !isTrashView && (
+                                                    <>
+                                                        <button onClick={(e) => { e.stopPropagation(); handleEarlyClose(job.id); }} className="p-1.5 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded" title="조기 마감"><Icons.StopCircle className="w-4 h-4" /></button>
+                                                        <button onClick={(e) => openEditModal(job, e)} className="p-1.5 text-gray-400 hover:text-brand-600 hover:bg-brand-50 rounded"><Icons.Edit className="w-4 h-4" /></button>
+                                                    </>
+                                                )}
+                                                {!isTrashView && <button onClick={(e) => handleDeleteJob(job.id, e)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"><Icons.Trash2 className="w-4 h-4" /></button>}
+                                                {isTrashView && <button onClick={(e) => { e.stopPropagation(); handleRestoreJob(job.id); }} className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded" title="복구"><Icons.CheckCircle className="w-4 h-4" /></button>}
+                                                {isTrashView && <button onClick={(e) => { e.stopPropagation(); handleHardDeleteJob(job.id); }} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded" title="영구삭제"><Icons.Trash2 className="w-4 h-4" /></button>}
+                                            </div>
+                                            <div className="flex justify-between items-start mb-4"><div className="flex gap-2"><Badge colorClass={isTrashView ? 'bg-red-100 text-red-700 border-red-200' : isClosedView ? 'bg-gray-200 text-gray-600 border-gray-300' : 'bg-green-100 text-green-700 border-green-200'}>{isTrashView ? '삭제됨' : isClosedView ? '마감됨' : job.status}</Badge>{!isClosedView && !isTrashView && <Badge colorClass="bg-red-50 text-red-600 border-red-100">{dday}</Badge>}</div></div>
+                                            <h3 className={`text-xl font-bold mb-1 transition-colors ${isClosedView ? 'text-gray-600' : 'text-gray-900 group-hover:text-brand-600'}`}>{job.title}</h3>
+                                            <div className="text-xs text-gray-500 mb-4 flex items-center gap-1"><Icons.Calendar className="w-3 h-3" />{job.period ? `${job.period.start} ~ ${job.period.end}` : '기간 미설정'}</div>
+                                            <div className="space-y-2 mb-6 text-sm text-gray-500"><div className="flex justify-between"><span>{job.team}</span><span>{job.meta.location}</span></div></div>
+                                            <div className="bg-white/50 rounded-lg p-3 flex justify-between text-center divide-x divide-gray-200 border border-gray-100"><div className="flex-1 px-1"><div className="text-xs text-gray-400 mb-1">지원자</div><div className="font-bold text-gray-800">{(job.candidates || []).length}</div></div><div className="flex-1 px-1"><div className="text-xs text-brand-500 mb-1">진행중</div><div className="font-bold text-brand-600">{(job.candidates || []).filter(c => !['최종합격', '불합격'].includes(c.status)).length}</div></div><div className="flex-1 px-1"><div className="text-xs text-green-500 mb-1">합격</div><div className="font-bold text-green-600">{(job.candidates || []).filter(c => c.status === '최종합격').length}</div></div></div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            const JobDetail = () => {
+                const [tab, setTab] = useState('kanban'); 
+                const candidates = activeJob.candidates || []; 
+                const funnelData = STAGES.map(stage => ({ stage, count: candidates.filter(c => c.status === stage).length }));
+                const isReadOnly = isExpired(activeJob.period.end);
+
+                return (
+                    <div className="h-full flex flex-col animate-slide-in">
+                        <div className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shrink-0">
+                            <div className="flex items-center gap-4">
+                                <button onClick={() => { setViewMode('list'); setActiveJobId(null); }} className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><Icons.ArrowLeft className="w-5 h-5" /></button>
+                                <div><h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">{activeJob.title}{isReadOnly && <span className="bg-gray-200 text-gray-600 text-xs px-2 py-0.5 rounded">마감됨</span>}</h1><div className="text-xs text-gray-500 flex gap-2 mt-1"><span className="flex items-center gap-1"><Icons.Calendar className="w-3 h-3"/> {activeJob.period.start} ~ {activeJob.period.end}</span></div></div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <div className="bg-gray-100 p-1 rounded-lg flex text-sm font-medium"><button onClick={() => setTab('kanban')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 ${tab === 'kanban' ? 'bg-white shadow text-brand-600' : 'text-gray-500'}`}><Icons.Layout className="w-4 h-4" /> 칸반보드</button><button onClick={() => setTab('analytics')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 ${tab === 'analytics' ? 'bg-white shadow text-brand-600' : 'text-gray-500'}`}><Icons.BarChart className="w-4 h-4" /> 성과분석</button></div>
+                                {!isReadOnly && (
+                                    <>
+                                        <button onClick={() => handleEarlyClose(activeJob.id)} className="bg-white text-orange-600 hover:bg-orange-50 border border-orange-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm transition-all"><Icons.StopCircle className="w-4 h-4" /> 조기 마감</button>
+                                        <button onClick={() => { setBulkUploadResult(null); setIsBulkUploadOpen(true); }} className="bg-white text-brand-700 hover:bg-brand-50 border border-brand-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm transition-all">엑셀 업로드</button>
+                                        <button onClick={() => setIsManualAddOpen(true)} className="bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm transition-all"><Icons.Plus className="w-4 h-4" /> 지원자 등록</button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                        {tab === 'kanban' ? (
+                            <div className="flex-1 overflow-x-auto overflow-y-hidden p-6 bg-slate-100">
+                                <div className="flex gap-4 h-full min-w-max">
+                                    {STAGES.map(stage => {
+                                        const colCandidates = candidates.filter(c => c.status === stage);
+                                        return (
+                                            <div key={stage} className="w-80 flex flex-col bg-slate-50 rounded-xl border border-slate-200/60 shadow-sm max-h-full">
+                                                <div className={`p-3 border-b border-gray-100 flex justify-between items-center rounded-t-xl bg-white`}><div className="flex items-center gap-2"><div className={`w-2.5 h-2.5 rounded-full bg-brand-500`}></div><span className="font-bold text-gray-700">{stage}</span></div><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs font-bold">{colCandidates.length}</span></div>
+                                                <div className="p-2 flex-1 overflow-y-auto space-y-2 custom-scrollbar">
+                                                    {colCandidates.map(c => {
+                                                        return (
+                                                            <div key={c.id} onClick={() => { setSelectedCandidate(c); setIsCandidateModalOpen(true); }} className="bg-white p-3 rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-brand-300 cursor-pointer transition-all group relative">
+                                                                {!isReadOnly && (
+                                                                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                                                        <button onClick={(e) => handleDeleteCandidate(c.id, e)} className="p-1.5 text-gray-400 hover:text-red-500 rounded-full bg-white shadow-sm hover:shadow border border-gray-100" title="지원자 삭제">
+                                                                            <Icons.Trash2 className="w-3.5 h-3.5" />
+                                                                        </button>
+                                                                    </div>
+                                                                )}
+                                                                <div className="flex justify-between items-start mb-2 pr-6"><h4 className="font-bold text-gray-800">{c.name}</h4><span className="text-xs font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{formatCandidateAddedAt(c)}</span></div>
+                                                                <div className="text-xs text-gray-500 mb-2 truncate">{c.email}</div>
+                                                                <div className="text-xs text-gray-400 mb-3 truncate">{c.phone}</div>
+                                                                {c.interviewDate && <div className="mb-2 inline-flex items-center bg-orange-50 text-orange-700 px-2 py-1 rounded text-xs font-bold"><Icons.Calendar className="w-3 h-3 mr-1"/>{new Date(c.interviewDate).toLocaleString('ko-KR', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'})}</div>}
+                                                                {!c.interviewDate && (c.status.includes('면접')) && <div className="mb-2 inline-flex items-center text-gray-400 text-xs"><Icons.Calendar className="w-3 h-3 mr-1"/>일정 미정</div>}
+                                                                
+                                                                {!isReadOnly && (<div className="flex justify-between mt-2 pt-2 border-t border-gray-50 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"><button onClick={(e) => { e.stopPropagation(); moveCandidate(c.id, -1); }} disabled={stage === STAGES[0]} className="text-xs text-gray-400 hover:text-brand-600 disabled:opacity-30">◀ 이전</button><button onClick={(e) => { e.stopPropagation(); moveCandidate(c.id, 1); }} disabled={stage === STAGES[STAGES.length-1]} className="text-xs text-gray-400 hover:text-brand-600 disabled:opacity-30">다음 ▶</button></div>)}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="p-8 overflow-y-auto flex-1 bg-slate-50">
+                                <div className="max-w-4xl mx-auto space-y-8">
+                                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                                        <h3 className="text-lg font-bold text-gray-800 mb-6">채용 깔때기</h3>
+                                        <div className="space-y-4">{funnelData.map((d, idx) => (<div key={d.stage} className="relative"><div className="flex items-center mb-1 text-sm font-medium text-gray-600"><span className="w-24">{d.stage}</span><span className="ml-auto font-bold text-gray-900">{d.count}명</span></div><div className="h-8 bg-gray-100 rounded-r-lg overflow-hidden relative"><div className="h-full bg-brand-500 opacity-90 transition-all duration-1000 ease-out" style={{ width: `${idx === 0 ? 100 : (d.count / (funnelData[0].count || 1)) * 100}%` }}></div></div></div>))}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            const renderContent = () => {
+                if (viewMode === 'detail' && activeJob) return <JobDetail />;
+                switch (currentMenu) {
+                    case 'dashboard': return <AdvancedDashboard />;
+                    case 'active': return <JobList type="active" />;
+                    case 'closed': return <JobList type="closed" />;
+                    case 'trash': return <JobList type="trash" />;
+                    case 'calendar': return <CalendarView />;
+                    case 'template-settings': return <KakaoTemplateSettingsPage />;
+                    default: return <AdvancedDashboard />;
+                }
+            };
+
+            if (!fbReady) {
+                return <div className="min-h-screen flex items-center justify-center bg-slate-50"><div className="text-center"><Icons.Cloud className="w-12 h-12 text-brand-500 animate-bounce mx-auto mb-4" /><p className="text-slate-600 font-medium">채용 클라우드에 연결 중...</p></div></div>;
+            }
+
+            if (isBookingMode) {
+                return <BookingPage />;
+            }
+
+            return (
+                <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-900">
+                    <div className="w-64 bg-slate-900 text-white flex flex-col shrink-0 transition-all">
+                        <div className="p-6 border-b border-slate-800 flex items-center gap-3">
+                            <div className="w-8 h-8 bg-brand-500 rounded flex items-center justify-center font-bold text-white">R</div>
+                            <span className="font-bold text-lg">Recruit<span className="text-brand-400">Pro</span></span>
+                        </div>
+                        <div className="p-4 flex-1 space-y-1">
+                            <div className="text-xs font-bold text-slate-500 mb-4 px-2">메인 메뉴</div>
+                            {[
+                                { id: 'dashboard', label: '대시보드', icon: Icons.Activity },
+                                { id: 'active', label: '진행중인 공고', icon: Icons.Briefcase },
+                                { id: 'closed', label: '마감된 공고', icon: Icons.Archive },
+                                { id: 'calendar', label: '면접 일정', icon: Icons.Calendar },
+                                { id: 'template-settings', label: '카카오톡 템플릿 설정', icon: Icons.FileText },
+                                { id: 'trash', label: `휴지통 (${trashJobs.length})`, icon: Icons.Trash2 }
+                            ].map(menu => (
+                                <button key={menu.id} onClick={() => { setCurrentMenu(menu.id); setViewMode('list'); setActiveJobId(null); }} 
+                                        className={`w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-colors ${currentMenu === menu.id ? 'bg-brand-600 text-white shadow-lg shadow-brand-900/50' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
+                                    <menu.icon className="w-5 h-5" /> {menu.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <main className="flex-1 overflow-hidden h-screen">
+                        {renderContent()}
+                    </main>
+
+                    <Modal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} title={editingJob ? "공고 수정" : "새 공고 등록"} size="lg">
+                        <form onSubmit={handleSaveJob} className="space-y-6">
+                            <div className="grid grid-cols-2 gap-6">
+                                <div className="col-span-2"><label className="block text-sm font-bold mb-1">제목</label><input name="title" defaultValue={editingJob?.title} required className="w-full border p-2.5 rounded-lg" /></div>
+                                <div><label className="block text-sm font-bold mb-1">부서</label><input name="team" defaultValue={editingJob?.team} required className="w-full border p-2.5 rounded-lg" /></div>
+                                <div><label className="block text-sm font-bold mb-1">근무지</label><input name="location" defaultValue={editingJob?.meta?.location} required className="w-full border p-2.5 rounded-lg" /></div>
+                                <div><label className="block text-sm font-bold mb-1">시작일</label><input type="date" name="startDate" defaultValue={editingJob?.period?.start} required className="w-full border p-2.5 rounded-lg" /></div>
+                                <div><label className="block text-sm font-bold mb-1">마감일</label><input type="date" name="endDate" defaultValue={editingJob?.period?.end} required className="w-full border p-2.5 rounded-lg" /></div>
+                                <div><label className="block text-sm font-bold mb-1">고용형태</label><select name="type" defaultValue={editingJob?.meta?.type} className="w-full border p-2.5 rounded-lg"><option>정규직</option><option>계약직</option></select></div>
+                                <div><label className="block text-sm font-bold mb-1">경력</label><select name="level" defaultValue={editingJob?.meta?.level} className="w-full border p-2.5 rounded-lg"><option>신입</option><option>경력</option><option>무관</option></select></div>
+                                <div><label className="block text-sm font-bold mb-1">연봉</label><input name="salary" defaultValue={editingJob?.meta?.salary} className="w-full border p-2.5 rounded-lg" /></div>
+                                <div><label className="block text-sm font-bold mb-1">기술스택</label><input name="skills" defaultValue={editingJob?.skills?.join(', ')} required className="w-full border p-2.5 rounded-lg" /></div>
+                            </div>
+                            <div><label className="block text-sm font-bold mb-1">상세내용</label><textarea name="description" defaultValue={editingJob?.description} rows="4" className="w-full border p-2.5 rounded-lg"></textarea></div>
+                            <div className="flex justify-end"><button className="bg-brand-600 text-white px-6 py-3 rounded-xl font-bold">{editingJob ? '수정' : '등록'}</button></div>
+                        </form>
+                    </Modal>
+
+                    <Modal isOpen={isManualAddOpen} onClose={() => setIsManualAddOpen(false)} title="지원자 등록">
+                        <form onSubmit={handleManualAdd} className="space-y-4">
+                            <div><label className="block text-sm font-bold mb-1">이름</label><input name="name" required className="w-full border p-2.5 rounded-lg" /></div>
+                            <div><label className="block text-sm font-bold mb-1">이메일</label><input name="email" type="email" className="w-full border p-2.5 rounded-lg" /></div>
+                            <div><label className="block text-sm font-bold mb-1">연락처</label><input name="phone" className="w-full border p-2.5 rounded-lg" placeholder="010-0000-0000" /></div>
+                            <div><label className="block text-sm font-bold mb-1">주소지 (간략)</label><input name="address" className="w-full border p-2.5 rounded-lg" placeholder="서울시 강남구" /></div>
+                            <div><label className="block text-sm font-bold mb-1">비고</label><textarea name="note" rows="3" className="w-full border p-2.5 rounded-lg" placeholder="특이사항 입력"></textarea></div>
+                            <div className="flex justify-end"><button className="bg-brand-600 text-white px-6 py-2 rounded-xl font-bold">등록하기</button></div>
+                        </form>
+                    </Modal>
+                    <Modal isOpen={isBulkUploadOpen} onClose={() => setIsBulkUploadOpen(false)} title="지원자 엑셀 대량 업로드">
+                        <div className="space-y-4">
+                            <div className="p-4 rounded-lg bg-blue-50 border border-blue-100">
+                                <div className="text-sm text-blue-800 font-semibold mb-1">업로드 안내</div>
+                                <div className="text-xs text-blue-700">CSV, XLSX 파일을 지원합니다. 필수 컬럼은 `이름` + (`이메일` 또는 `연락처`)입니다.</div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                <button type="button" onClick={downloadCandidateTemplate} className="px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white hover:bg-gray-50">양식 다운로드 (CSV)</button>
+                                <label className={`px-3 py-2 text-sm rounded-lg ${bulkUploading ? 'bg-gray-200 text-gray-500' : 'bg-brand-600 text-white hover:bg-brand-700'} cursor-pointer`}>
+                                    파일 선택 및 업로드
+                                    <input
+                                        type="file"
+                                        accept=".csv,.xlsx,.xls"
+                                        className="hidden"
+                                        disabled={bulkUploading}
+                                        onChange={(e) => {
+                                            const file = e.target.files && e.target.files[0];
+                                            handleBulkUploadFile(file);
+                                            e.target.value = '';
+                                        }}
+                                    />
+                                </label>
+                            </div>
+                            {bulkUploading && <div className="text-sm text-gray-600">업로드 처리 중입니다...</div>}
+                            {bulkUploadResult && (
+                                <div className="p-4 rounded-lg border border-gray-200 bg-gray-50 space-y-2">
+                                    <div className="text-sm font-semibold text-gray-800">처리 결과</div>
+                                    <div className="text-sm text-gray-700">총 {bulkUploadResult.total}건 / 성공 {bulkUploadResult.success}건 / 실패 {bulkUploadResult.failed}건</div>
+                                    {(bulkUploadResult.invalidRows.length > 0 || bulkUploadResult.duplicatesInSystem.length > 0 || bulkUploadResult.duplicatesInFile.length > 0) && (
+                                        <div className="text-xs text-gray-600 max-h-40 overflow-y-auto bg-white border rounded p-2 space-y-1">
+                                            {bulkUploadResult.invalidRows.map((msg, idx) => <div key={`i-${idx}`}>{msg}</div>)}
+                                            {bulkUploadResult.duplicatesInFile.map((msg, idx) => <div key={`f-${idx}`}>{msg}</div>)}
+                                            {bulkUploadResult.duplicatesInSystem.map((msg, idx) => <div key={`s-${idx}`}>{msg}</div>)}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </Modal>
+
+                    <Modal isOpen={isCandidateModalOpen} onClose={() => setIsCandidateModalOpen(false)} title="지원자 상세 정보">
+                        {selectedCandidate && (
+                            <div className="space-y-6">
+                                {/* 상단 헤더 */}
+                                <div className="flex justify-between items-start pb-4 border-b">
+                                    <div>
+                                        <h2 className="text-2xl font-bold text-gray-900">{selectedCandidate.name}</h2>
+                                        <div className="flex gap-4 mt-2 text-sm text-gray-600">
+                                            {selectedCandidate.email && <span className="flex items-center gap-1"><Icons.Mail className="w-4 h-4"/> {selectedCandidate.email}</span>}
+                                            {selectedCandidate.phone && <span className="flex items-center gap-1"><Icons.Phone className="w-4 h-4"/> {selectedCandidate.phone}</span>}
+                                        </div>
+                                    </div>
+                                    <div className={`px-3 py-1.5 rounded-lg text-sm font-bold bg-blue-50 text-blue-600`}>
+                                        {selectedCandidate.status}
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+                                        <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><Icons.MapPin className="w-4 h-4 text-orange-500"/> 주소지</h4>
+                                        <p className="text-sm text-gray-600">{selectedCandidate.address || '정보 없음'}</p>
+                                    </div>
+                                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+                                        <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><Icons.Clock className="w-4 h-4 text-blue-500"/> 등록 정보</h4>
+                                        <div className="space-y-1 text-sm text-gray-600">
+                                            <div className="flex justify-between"><span>등록일:</span> <span className="font-medium">{formatCandidateAddedAt(selectedCandidate)}</span></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                                    <h4 className="font-bold mb-2 flex items-center gap-2"><Icons.FileText className="w-4 h-4" /> 비고</h4>
+                                    <p className="text-gray-700 text-sm whitespace-pre-wrap max-h-60 overflow-y-auto">{selectedCandidate.note || "내용 없음"}</p>
+                                </div>
+
+                                {/* 면접 일정 */}
+                                {(selectedCandidate.status.includes('면접')) && (
+                                    <div className="space-y-4">
+                                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+                                            <div className="flex items-start justify-between gap-3 mb-3">
+                                                <div>
+                                                    <h4 className="font-bold text-blue-800 flex items-center gap-2"><Icons.Calendar className="w-4 h-4" /> 카카오 발송 메뉴</h4>
+                                                    <p className="text-xs text-blue-600 mt-1">후보 시간을 정하고 카카오 알림 발송용 링크와 문구를 준비합니다.</p>
+                                                </div>
+                                                <Badge colorClass="bg-white text-blue-700 border-blue-200">
+                                                    {SCHEDULE_REQUEST_STATUS_LABELS[getScheduleRequestStatus(selectedCandidate)] || '초안'}
+                                                </Badge>
+                                            </div>
+                                            <div className="rounded-lg border border-blue-100 bg-white/70 p-3 mb-3">
+                                                <div className="text-xs font-bold text-blue-700 mb-2">1. 발송 후보 시간 입력</div>
+                                                <div className="text-xs text-blue-600">지원자가 카톡에서 링크를 눌러 선택할 시간 1~3개를 넣습니다.</div>
+                                            </div>
+                                            <div className="space-y-2">
+                                                {scheduleDraft.slots.map((slot, idx) => (
+                                                    <div key={slot.id} className="flex items-center gap-2">
+                                                        <div className="w-16 text-xs font-bold text-blue-700">후보 {idx + 1}</div>
+                                                        <input
+                                                            type="datetime-local"
+                                                            className="border border-blue-200 rounded p-2 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500"
+                                                            value={slot.datetime}
+                                                            onChange={(e) => handleDraftSlotChange(slot.id, e.target.value)}
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="flex flex-wrap gap-2 mt-4">
+                                                <button type="button" disabled={bookingActionBusy} onClick={() => persistScheduleRequest()} className="px-3 py-2 rounded-lg text-sm bg-white border border-blue-200 text-blue-700 hover:bg-blue-100 disabled:opacity-50">후보 저장</button>
+                                                <button type="button" disabled={bookingActionBusy} onClick={copyBookingLink} className="px-3 py-2 rounded-lg text-sm bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">예약 링크 생성/복사</button>
+                                                <button type="button" disabled={bookingActionBusy} onClick={markBookingLinkSent} className="px-3 py-2 rounded-lg text-sm bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50">카카오 발송 처리</button>
+                                            </div>
+                                            <div className="mt-3 text-xs text-blue-700 bg-white/70 border border-blue-100 rounded-lg p-3 space-y-1">
+                                                <div>현재 예약 링크 기준 URL: {getBookingBaseUrl()}</div>
+                                                <div>로컬 파일 상태에서는 외부 공유가 안 되므로, 실제 카카오 발송 전에는 이 파일을 웹 URL로 배포해야 합니다.</div>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-white border border-yellow-200 rounded-lg p-4 space-y-3">
+                                            <div>
+                                                <h4 className="font-bold text-slate-800">카카오 발송 템플릿 미리보기</h4>
+                                                <p className="text-xs text-slate-500 mt-1">현재 후보 시간을 기준으로 만들어지는 기본 발송 문구입니다.</p>
+                                            </div>
+                                            <div className="whitespace-pre-wrap text-sm text-slate-700 bg-yellow-50 border border-yellow-100 rounded-lg p-4 leading-6">
+                                                {buildInterviewRequestMessage({
+                                                    candidateName: selectedCandidate.name,
+                                                    companyName: templateSettings.companyName,
+                                                    jobTitle: activeJob?.title,
+                                                    slots: scheduleDraft.slots.filter((slot) => slot.datetime),
+                                                    bookingUrl: buildBookingUrl({
+                                                        jobId: activeJob?.id,
+                                                        candidateId: selectedCandidate.id,
+                                                        token: selectedCandidate.scheduleRequest?.token || scheduleDraft.token || 'preview-token'
+                                                    }),
+                                                    templateSettings
+                                                })}
+                                            </div>
+                                            <div className="text-xs text-slate-500">
+                                                실제 알림톡 연동 시에는 공급사 템플릿 코드와 치환변수에 맞춰 서버에서 최종 발송됩니다.
+                                            </div>
+                                        </div>
+
+                                        {selectedCandidate.scheduleRequest?.token && (
+                                            <div className="bg-white border border-slate-200 rounded-lg p-4 space-y-3">
+                                                <h4 className="font-bold text-slate-800">예약 링크/응답 현황</h4>
+                                                <div className="text-xs text-slate-500 break-all bg-slate-50 border rounded p-3">
+                                                    {buildBookingUrl({
+                                                        jobId: activeJob?.id,
+                                                        candidateId: selectedCandidate.id,
+                                                        token: selectedCandidate.scheduleRequest?.token
+                                                    })}
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                                        <div className="text-xs text-slate-500 mb-1">발송 시각</div>
+                                                        <div className="font-medium text-slate-800">{formatDateTimeLabel(selectedCandidate.scheduleRequest?.sentAt)}</div>
+                                                    </div>
+                                                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                                        <div className="text-xs text-slate-500 mb-1">지원자 응답</div>
+                                                        <div className="font-medium text-slate-800">{formatDateTimeLabel(selectedCandidate.scheduleRequest?.respondedAt)}</div>
+                                                    </div>
+                                                </div>
+
+                                                {getSelectedSlot(selectedCandidate) && (
+                                                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                                                        <div className="text-sm font-bold text-emerald-800 mb-1">지원자가 선택한 일정</div>
+                                                        <div className="text-emerald-700">{formatDateTimeLabel(getSelectedSlot(selectedCandidate)?.datetime)}</div>
+                                                        <div className="flex flex-wrap gap-2 mt-3">
+                                                            <button type="button" disabled={bookingActionBusy || getScheduleRequestStatus(selectedCandidate) === 'confirmed'} onClick={confirmCandidateSchedule} className="px-3 py-2 rounded-lg text-sm bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">선택 일정 확정</button>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                                            <h4 className="font-bold text-gray-800 mb-2">직접 확정 일정</h4>
+                                            <input type="datetime-local" className="border border-gray-200 rounded p-2 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500"
+                                                value={selectedCandidate.interviewDate || ''}
+                                                onChange={(e) => handleUpdateCandidateInterview(e.target.value)} />
+                                            <p className="text-xs text-gray-500 mt-2">긴급 상황에서는 기존 방식처럼 면접 일정을 직접 확정할 수도 있습니다.</p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* 하단 액션 */}
+                                {viewMode === 'detail' && activeJob && !isExpired(activeJob.period.end) && (
+                                    <div className="grid grid-cols-3 gap-2 pt-4 border-t">
+                                        {STAGES.map(s => <button key={s} onClick={async () => {
+                                            if (!activeJob?.id || !selectedCandidate?.id) return;
+                                            const updatedCandidates = await updateCandidatesAtomic(activeJob.id, (currentCandidates) =>
+                                                currentCandidates.map(c => c.id === selectedCandidate.id ? {...c, status: s} : c)
+                                            );
+                                            if (updatedCandidates) {
+                                                const latest = updatedCandidates.find(c => c.id === selectedCandidate.id);
+                                                if (latest) setSelectedCandidate(latest);
+                                            }
+                                            setIsCandidateModalOpen(false);
+                                        }} className={`border py-2 rounded text-xs hover:bg-gray-50 ${selectedCandidate.status === s ? 'bg-slate-800 text-white' : ''}`}>{s}</button>)}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </Modal>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<ErrorBoundary><App /></ErrorBoundary>);
+    </script>
+</body>
+</html>
