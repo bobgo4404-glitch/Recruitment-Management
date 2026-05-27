@@ -170,6 +170,13 @@
         };
 
         const STAGES = ['접수', '서류검토', '1차면접', '2차면접', '최종합격', '불합격'];
+        const CANDIDATE_SOURCES = ['사람인', '잡코리아', '추천', '링크드인', '홈페이지', '기타'];
+        const DASHBOARD_RANGE_OPTIONS = [
+            { id: 'all', label: '전체' },
+            { id: '7', label: '최근 7일' },
+            { id: '30', label: '최근 30일' },
+            { id: '90', label: '최근 90일' }
+        ];
         const SCHEDULE_REQUEST_STATUS_LABELS = {
             draft: '요청 전',
             ready: '요청 전',
@@ -212,6 +219,30 @@
                 minute: '2-digit'
             });
         };
+        const getCandidateAddedDate = (candidate) => {
+            if (!candidate) return null;
+            if (Number.isFinite(candidate.addedAtTs)) return new Date(candidate.addedAtTs);
+            const raw = candidate.addedAtIso || candidate.addedAt;
+            const d = new Date(raw);
+            if (!Number.isNaN(d.getTime())) return d;
+            const match = String(raw || '').match(/(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})/);
+            if (!match) return null;
+            return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+        };
+        const isCandidateInRange = (candidate, range) => {
+            if (range === 'all') return true;
+            const added = getCandidateAddedDate(candidate);
+            if (!added) return false;
+            const start = new Date();
+            start.setHours(0, 0, 0, 0);
+            start.setDate(start.getDate() - (Number(range) - 1));
+            return added >= start;
+        };
+        const percentLabel = (value, total, digits = 1) => {
+            if (!total) return '0.0%';
+            return `${((value / total) * 100).toFixed(digits)}%`;
+        };
+        const isFinalCandidate = (candidate) => ['최종합격', '불합격'].includes(candidate?.status);
         
         const getDday = (endDate) => {
             const today = new Date();
@@ -492,6 +523,7 @@
                     name: fd.get('name') || '이름 없음', 
                     email: fd.get('email') || '',
                     phone: fd.get('phone') || '',
+                    source: fd.get('source') || '기타',
                     address: fd.get('address') || '',
                     note: fd.get('note') || '',
                     status: '접수', 
@@ -508,8 +540,8 @@
             };
             const downloadCandidateTemplate = () => {
                 const rows = [
-                    ['이름', '이메일', '연락처', '주소', '비고'],
-                    ['홍길동', 'sample@company.com', '010-1234-5678', '서울시 강남구', '포트폴리오 우수']
+                    ['이름', '이메일', '연락처', '지원경로', '주소', '비고'],
+                    ['홍길동', 'sample@company.com', '010-1234-5678', '사람인', '서울시 강남구', '포트폴리오 우수']
                 ];
                 const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
                 const bom = '\uFEFF';
@@ -558,9 +590,10 @@
                 const name = String(raw['이름'] || raw['성명'] || raw['name'] || '').trim();
                 const email = String(raw['이메일'] || raw['email'] || '').trim();
                 const phone = String(raw['연락처'] || raw['전화번호'] || raw['phone'] || '').trim();
+                const source = String(raw['지원경로'] || raw['채널'] || raw['source'] || raw['channel'] || '').trim();
                 const address = String(raw['주소'] || raw['주소지'] || raw['address'] || '').trim();
                 const note = String(raw['비고'] || raw['메모'] || raw['note'] || '').trim();
-                return { name, email, phone, address, note };
+                return { name, email, phone, source, address, note };
             };
             const handleBulkUploadFile = async (file) => {
                 if (!file) return;
@@ -634,6 +667,7 @@
                             name,
                             email: row.email || '',
                             phone: row.phone || '',
+                            source: row.source || '기타',
                             address: row.address || '',
                             note: row.note || '',
                             status: '접수',
@@ -738,21 +772,37 @@
                     const count = liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => c.status === stage).length, 0);
                     return { stage, count };
                 });
+                const sourceCounts = Object.values(liveJobs.reduce((acc, job) => {
+                    (job.candidates || []).forEach((c) => {
+                        const source = c.source || '미기록';
+                        if (!acc[source]) acc[source] = { source, total: 0, interview: 0, hired: 0 };
+                        acc[source].total += 1;
+                        if (isInterviewCandidate(c) || c.status === '최종합격') acc[source].interview += 1;
+                        if (c.status === '최종합격') acc[source].hired += 1;
+                    });
+                    return acc;
+                }, {})).sort((a, b) => b.total - a.total);
                 const totals = {
                     totalJobs: liveJobs.length,
                     activeJobs: activeJobs.length,
                     closedJobs: closedJobs.length,
                     totalCandidates: liveJobs.reduce((acc, j) => acc + (j.candidates || []).length, 0),
                     hired: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => c.status === '최종합격').length, 0),
-                    inInterview: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => String(c.status).includes('면접')).length, 0)
+                    rejected: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => c.status === '불합격').length, 0),
+                    inInterview: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => String(c.status).includes('면접')).length, 0),
+                    reachedInterview: liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter((c) => isInterviewCandidate(c) || c.status === '최종합격').length, 0)
                 };
                 const hireRate = totals.totalCandidates > 0 ? ((totals.hired / totals.totalCandidates) * 100).toFixed(1) : '0.0';
+                const interviewRate = totals.totalCandidates > 0 ? ((totals.reachedInterview / totals.totalCandidates) * 100).toFixed(1) : '0.0';
+                const rejectionRate = totals.totalCandidates > 0 ? ((totals.rejected / totals.totalCandidates) * 100).toFixed(1) : '0.0';
                 const rows = [['섹션', '항목', '값1', '값2', '값3', '값4']];
                 rows.push(['요약', '생성일시', new Date().toLocaleString('ko-KR'), '', '', '']);
                 rows.push(['요약', '전체 공고', totals.totalJobs, '', '', '']);
                 rows.push(['요약', '진행중/마감', totals.activeJobs, totals.closedJobs, '', '']);
                 rows.push(['요약', '전체 지원자', totals.totalCandidates, '', '', '']);
                 rows.push(['요약', '합격자/합격률', totals.hired, `${hireRate}%`, '', '']);
+                rows.push(['요약', '면접도달/면접률', totals.reachedInterview, `${interviewRate}%`, '', '']);
+                rows.push(['요약', '불합격/불합격률', totals.rejected, `${rejectionRate}%`, '', '']);
                 rows.push(['요약', '면접 진행중', totals.inInterview, '', '', '']);
                 rows.push(['리스크', '오늘 면접', scheduleAlerts.todayInterviews.length, '', '', '']);
                 rows.push(['리스크', '사람인 요청 전', scheduleAlerts.missingSaraminRequests.length, '', '', '']);
@@ -760,16 +810,22 @@
                 rows.push(['리스크', '7일 이내 마감', scheduleAlerts.withinWeekDeadlines.length, '', '', '']);
                 rows.push(['파이프라인', '단계', '인원', '', '', '']);
                 stageCounts.forEach((s) => rows.push(['파이프라인', s.stage, s.count, '', '', '']));
-                rows.push(['공고상세', '공고명', '부서', '기간', '지원자', '합격']);
+                rows.push(['지원경로', '경로', '지원자', '면접도달', '합격', '합격률']);
+                sourceCounts.forEach((s) => rows.push(['지원경로', s.source, s.total, s.interview, s.hired, percentLabel(s.hired, s.total)]));
+                rows.push(['공고상세', '공고명', '부서', '기간', '지원자', '면접도달', '합격', '합격률']);
                 activeJobs.forEach((j) => {
                     const cands = j.candidates || [];
+                    const reachedInterview = cands.filter((c) => isInterviewCandidate(c) || c.status === '최종합격').length;
+                    const hired = cands.filter((c) => c.status === '최종합격').length;
                     rows.push([
                         '공고상세',
                         j.title || '',
                         j.team || '',
                         `${j.period?.start || ''} ~ ${j.period?.end || ''}`,
                         cands.length,
-                        cands.filter((c) => c.status === '최종합격').length
+                        reachedInterview,
+                        hired,
+                        percentLabel(hired, cands.length)
                     ]);
                 });
                 rows.push(['리스크상세', '유형', '공고', '지원자', '상태', '일시']);
@@ -1162,31 +1218,159 @@
             };
 
             const AdvancedDashboard = () => {
+                const [dashboardRange, setDashboardRange] = useState('30');
                 const totalActive = activeJobs.length;
-                const totalCandidates = liveJobs.reduce((acc, j) => acc + (j.candidates || []).length, 0);
-                const interviewees = activeJobs.reduce((acc, j) => acc + (j.candidates || []).filter(c => c.status.includes('면접')).length, 0);
-                const hiredCount = liveJobs.reduce((acc, j) => acc + (j.candidates || []).filter(c => c.status === '최종합격').length, 0);
+                const allCandidateRecords = useMemo(() => {
+                    return liveJobs.flatMap((job) => (job.candidates || []).map((candidate) => ({
+                        candidate,
+                        jobId: job.id,
+                        jobTitle: job.title || '-',
+                        team: job.team || '미지정',
+                        period: job.period || {},
+                        source: candidate.source || '미기록'
+                    })));
+                }, [liveJobs]);
+                const scopedCandidateRecords = useMemo(() => {
+                    return allCandidateRecords.filter(({ candidate }) => isCandidateInRange(candidate, dashboardRange));
+                }, [allCandidateRecords, dashboardRange]);
+                const totalCandidates = allCandidateRecords.length;
+                const scopedTotal = scopedCandidateRecords.length;
+                const scopedInterviewed = scopedCandidateRecords.filter(({ candidate }) => isInterviewCandidate(candidate) || candidate.status === '최종합격').length;
+                const scopedHired = scopedCandidateRecords.filter(({ candidate }) => candidate.status === '최종합격').length;
+                const scopedRejected = scopedCandidateRecords.filter(({ candidate }) => candidate.status === '불합격').length;
+                const scopedActiveCandidates = scopedCandidateRecords.filter(({ candidate }) => !isFinalCandidate(candidate)).length;
+                const averagePerActiveJob = totalActive > 0 ? (scopedTotal / totalActive).toFixed(1) : '0.0';
                 const skillCounts = useMemo(() => {
-                    const counts = {}; liveJobs.forEach(job => (job.skills || []).forEach(skill => counts[skill] = (counts[skill] || 0) + 1));
+                    const counts = {};
+                    liveJobs.forEach(job => (job.skills || []).forEach(skill => counts[skill] = (counts[skill] || 0) + 1));
                     return Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 5);
                 }, [liveJobs]);
                 const recentActivities = useMemo(() => {
-                    const allCandidates = []; liveJobs.forEach(job => { (job.candidates || []).forEach(c => allCandidates.push({...c, jobTitle: job.title})); });
-                    return allCandidates.sort((a, b) => {
-                        const aTime = Number.isFinite(a.addedAtTs) ? a.addedAtTs : Date.parse(a.addedAtIso || a.addedAt || 0);
-                        const bTime = Number.isFinite(b.addedAtTs) ? b.addedAtTs : Date.parse(b.addedAtIso || b.addedAt || 0);
-                        return bTime - aTime;
-                    }).slice(0, 5);
-                }, [liveJobs]);
+                    return [...allCandidateRecords]
+                        .sort((a, b) => {
+                            const aTime = getCandidateAddedDate(a.candidate)?.getTime() || 0;
+                            const bTime = getCandidateAddedDate(b.candidate)?.getTime() || 0;
+                            return bTime - aTime;
+                        })
+                        .slice(0, 5);
+                }, [allCandidateRecords]);
                 const departmentStats = useMemo(() => {
-                    const depts = {}; activeJobs.forEach(j => depts[j.team] = (depts[j.team] || 0) + (j.candidates || []).length);
-                    return Object.entries(depts).map(([name, count]) => ({name, count, total: count + 5})).slice(0,4); 
-                }, [activeJobs]);
+                    const depts = {};
+                    activeJobs.forEach((job) => {
+                        const count = (job.candidates || []).filter((candidate) => isCandidateInRange(candidate, dashboardRange)).length;
+                        depts[job.team || '미지정'] = (depts[job.team || '미지정'] || 0) + count;
+                    });
+                    const entries = Object.entries(depts).sort((a,b) => b[1] - a[1]).slice(0, 5);
+                    const max = Math.max(...entries.map(([, count]) => count), 1);
+                    return entries.map(([name, count]) => ({ name, count, rate: (count / max) * 100 }));
+                }, [activeJobs, dashboardRange]);
+                const stageStats = useMemo(() => {
+                    const stats = STAGES.map((stage) => ({
+                        stage,
+                        count: scopedCandidateRecords.filter(({ candidate }) => candidate.status === stage).length
+                    }));
+                    const max = Math.max(...stats.map((item) => item.count), 1);
+                    return stats.map((item) => ({
+                        ...item,
+                        height: Math.max((item.count / max) * 100, item.count > 0 ? 10 : 4),
+                        rate: percentLabel(item.count, scopedTotal)
+                    }));
+                }, [scopedCandidateRecords, scopedTotal]);
+                const sourceStats = useMemo(() => {
+                    const map = {};
+                    scopedCandidateRecords.forEach(({ candidate, source }) => {
+                        if (!map[source]) map[source] = { source, count: 0, interviewed: 0, hired: 0, active: 0 };
+                        map[source].count += 1;
+                        if (isInterviewCandidate(candidate) || candidate.status === '최종합격') map[source].interviewed += 1;
+                        if (candidate.status === '최종합격') map[source].hired += 1;
+                        if (!isFinalCandidate(candidate)) map[source].active += 1;
+                    });
+                    return Object.values(map)
+                        .sort((a, b) => b.count - a.count)
+                        .map((item) => ({
+                            ...item,
+                            interviewRate: percentLabel(item.interviewed, item.count),
+                            hireRate: percentLabel(item.hired, item.count)
+                        }));
+                }, [scopedCandidateRecords]);
+                const jobPerformance = useMemo(() => {
+                    return activeJobs.map((job) => {
+                        const candidates = (job.candidates || []).filter((candidate) => isCandidateInRange(candidate, dashboardRange));
+                        const total = candidates.length;
+                        const interviewed = candidates.filter((candidate) => isInterviewCandidate(candidate) || candidate.status === '최종합격').length;
+                        const hired = candidates.filter((candidate) => candidate.status === '최종합격').length;
+                        const rejected = candidates.filter((candidate) => candidate.status === '불합격').length;
+                        const missingSchedule = candidates.filter((candidate) => isInterviewCandidate(candidate) && !candidate.interviewDate).length;
+                        const dday = job.period?.end ? getDday(job.period.end) : '';
+                        const closingSoon = dday === '오늘마감' || (dday.startsWith('D-') && Number(dday.replace('D-', '')) <= 7);
+                        return {
+                            id: job.id,
+                            title: job.title || '-',
+                            team: job.team || '미지정',
+                            total,
+                            interviewed,
+                            hired,
+                            rejected,
+                            missingSchedule,
+                            riskScore: missingSchedule + (closingSoon ? 1 : 0),
+                            interviewRate: percentLabel(interviewed, total),
+                            hireRate: percentLabel(hired, total)
+                        };
+                    }).sort((a, b) => (b.riskScore - a.riskScore) || (b.total - a.total)).slice(0, 6);
+                }, [activeJobs, dashboardRange]);
+                const weeklyTrend = useMemo(() => {
+                    const today = new Date();
+                    today.setHours(23, 59, 59, 999);
+                    return Array.from({ length: 8 }).map((_, idx) => {
+                        const start = new Date(today);
+                        start.setDate(today.getDate() - ((7 - idx) * 7));
+                        start.setHours(0, 0, 0, 0);
+                        const end = new Date(start);
+                        end.setDate(start.getDate() + 6);
+                        end.setHours(23, 59, 59, 999);
+                        const count = allCandidateRecords.filter(({ candidate }) => {
+                            const added = getCandidateAddedDate(candidate);
+                            return added && added >= start && added <= end;
+                        }).length;
+                        return { label: `${start.getMonth() + 1}/${start.getDate()}`, count };
+                    });
+                }, [allCandidateRecords]);
+                const maxTrendCount = Math.max(...weeklyTrend.map((item) => item.count), 1);
+                const topSource = sourceStats[0]?.source || '-';
+                const kpis = [
+                    { title: '진행중 공고', value: totalActive, unit: '건', sub: `공고당 평균 ${averagePerActiveJob}명`, icon: Icons.Briefcase, box: 'bg-blue-50 text-blue-600' },
+                    { title: '분석 대상 지원자', value: scopedTotal, unit: '명', sub: `전체 누적 ${totalCandidates}명`, icon: Icons.Users, box: 'bg-indigo-50 text-indigo-600' },
+                    { title: '면접 전환율', value: percentLabel(scopedInterviewed, scopedTotal), unit: '', sub: `면접/합격 ${scopedInterviewed}명`, icon: Icons.Activity, box: 'bg-orange-50 text-orange-600' },
+                    { title: '합격률', value: percentLabel(scopedHired, scopedTotal), unit: '', sub: `합격 ${scopedHired}명 · 불합격 ${scopedRejected}명`, icon: Icons.TrendingUp, box: 'bg-emerald-50 text-emerald-600' }
+                ];
 
                 return (
                     <div className="space-y-8 animate-fade-in-up p-8 h-full overflow-y-auto custom-scrollbar pb-20">
                         {permissionError && (<div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3 text-red-700 mb-4 animate-bounce"><Icons.AlertTriangle className="w-6 h-6 shrink-0" /><div><strong>Firestore 권한 오류:</strong> 데이터를 불러올 수 없습니다. Rules를 확인해주세요.</div></div>)}
-                        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-3xl font-bold text-gray-900">통합 인사이트 대시보드</h2><p className="text-gray-500 mt-2">전사 채용 현황 및 핵심 지표를 실시간으로 모니터링합니다.</p></div><div className="flex gap-2"><button onClick={exportWeeklyReportCsv} className="px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white hover:bg-gray-50">주간 CSV</button><button onClick={printWeeklySummary} className="px-3 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">요약 인쇄</button><button onClick={printExecutiveOnePage} className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800">경영진 1페이지</button></div></div>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <h2 className="text-3xl font-bold text-gray-900">통합 인사이트 대시보드</h2>
+                                <p className="text-gray-500 mt-2">지원 흐름, 채널 성과, 공고별 병목을 한 화면에서 확인합니다.</p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <div className="bg-white border border-gray-200 rounded-lg p-1 flex text-sm">
+                                    {DASHBOARD_RANGE_OPTIONS.map((option) => (
+                                        <button
+                                            key={option.id}
+                                            type="button"
+                                            onClick={() => setDashboardRange(option.id)}
+                                            className={`px-3 py-1.5 rounded-md ${dashboardRange === option.id ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                                        >
+                                            {option.label}
+                                        </button>
+                                    ))}
+                                </div>
+                                <button onClick={exportWeeklyReportCsv} className="px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white hover:bg-gray-50">주간 CSV</button>
+                                <button onClick={printWeeklySummary} className="px-3 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">요약 인쇄</button>
+                                <button onClick={printExecutiveOnePage} className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800">경영진 1페이지</button>
+                            </div>
+                        </div>
+
                         <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
                             <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.AlertTriangle className="w-5 h-5 text-amber-500" /> 일정 누락/임박 알림</h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 text-sm">
@@ -1240,25 +1424,131 @@
                                 </div>
                             )}
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                            {[{ title: '진행중 공고', value: totalActive, unit: '건', color: 'blue', icon: Icons.Briefcase }, { title: '전체 누적 지원자', value: totalCandidates, unit: '명', color: 'purple', icon: Icons.Users }, { title: '면접 진행중', value: interviewees, unit: '명', color: 'orange', icon: Icons.Activity }, { title: '누적 합격자', value: hiredCount, unit: '명', color: 'green', icon: Icons.TrendingUp }].map((kpi, i) => (
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+                            {kpis.map((kpi, i) => (
                                 <div key={i} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
-                                    <div className="flex justify-between items-start mb-4"><div className={`p-3 rounded-xl bg-${kpi.color}-50 text-${kpi.color}-600`}><kpi.icon className="w-6 h-6" /></div></div>
-                                    <div className="text-3xl font-bold text-gray-900">{kpi.value}<span className="text-base text-gray-400 font-normal ml-1">{kpi.unit}</span></div><div className="text-sm text-gray-500 mt-1">{kpi.title}</div>
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className={`p-3 rounded-xl ${kpi.box}`}><kpi.icon className="w-6 h-6" /></div>
+                                    </div>
+                                    <div className="text-3xl font-bold text-gray-900">{kpi.value}<span className="text-base text-gray-400 font-normal ml-1">{kpi.unit}</span></div>
+                                    <div className="text-sm text-gray-500 mt-1">{kpi.title}</div>
+                                    <div className="text-xs text-slate-400 mt-3">{kpi.sub}</div>
                                 </div>
                             ))}
                         </div>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.BarChart className="w-5 h-5 text-gray-400" /> 부서별 지원 현황</h3>
-                                <div className="space-y-6">{departmentStats.length > 0 ? departmentStats.map((dept, i) => (<div key={i}><div className="flex justify-between text-sm mb-2"><span className="font-medium text-gray-700">{dept.name}</span><span className="text-gray-500">{dept.count}명</span></div><div className="h-3 w-full bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-brand-500 rounded-full animate-grow-width" style={{ '--target-width': `${(dept.count/dept.total)*100}%` }}></div></div></div>)) : <div className="text-center text-gray-400 text-sm py-4">진행 중인 공고가 없습니다.</div>}</div></div>
-                            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.Layout className="w-5 h-5 text-gray-400" /> 전체 채용 파이프라인</h3>
-                                <div className="flex items-end justify-between h-48 space-x-2">{STAGES.map((stage, i) => { const count = activeJobs.reduce((acc, j) => acc + (j.candidates || []).filter(c => c.status === stage).length, 0); const maxCount = totalCandidates || 1; const height = totalCandidates > 0 ? (count / maxCount) * 100 : 5; return (<div key={stage} className="flex-1 flex flex-col justify-end items-center group"><div className="mb-2 text-xs font-bold text-brand-600 opacity-0 group-hover:opacity-100 transition-opacity">{count}명</div><div className="w-full bg-brand-100 rounded-t-lg transition-all hover:bg-brand-400 relative group-hover:shadow-lg" style={{ height: `${Math.max(height, 5)}%` }}></div><div className="mt-3 text-xs text-gray-500 font-medium rotate-0 whitespace-nowrap">{stage}</div></div>)})}</div></div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+                            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm xl:col-span-2">
+                                <div className="flex items-center justify-between mb-6">
+                                    <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Icons.Layout className="w-5 h-5 text-gray-400" /> 채용 파이프라인 분포</h3>
+                                    <div className="text-xs text-slate-400">선택 기간 기준</div>
+                                </div>
+                                <div className="flex items-end justify-between h-56 gap-2">
+                                    {stageStats.map((item) => (
+                                        <div key={item.stage} className="flex-1 flex flex-col justify-end items-center group min-w-0">
+                                            <div className="mb-2 text-xs font-bold text-brand-600">{item.count}명</div>
+                                            <div className="w-full bg-brand-100 rounded-t-lg transition-all hover:bg-brand-400 relative group-hover:shadow-lg" style={{ height: `${item.height}%` }}></div>
+                                            <div className="mt-3 text-xs text-gray-500 font-medium whitespace-nowrap">{item.stage}</div>
+                                            <div className="text-[11px] text-gray-400 mt-1">{item.rate}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
+                                <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.TrendingUp className="w-5 h-5 text-gray-400" /> 핵심 인사이트</h3>
+                                <div className="space-y-4 text-sm">
+                                    <div className="flex justify-between gap-4"><span className="text-gray-500">최고 유입 채널</span><span className="font-bold text-gray-900">{topSource}</span></div>
+                                    <div className="flex justify-between gap-4"><span className="text-gray-500">진행중 인재</span><span className="font-bold text-gray-900">{scopedActiveCandidates}명</span></div>
+                                    <div className="flex justify-between gap-4"><span className="text-gray-500">면접 전환</span><span className="font-bold text-orange-600">{percentLabel(scopedInterviewed, scopedTotal)}</span></div>
+                                    <div className="flex justify-between gap-4"><span className="text-gray-500">합격 전환</span><span className="font-bold text-emerald-600">{percentLabel(scopedHired, scopedTotal)}</span></div>
+                                </div>
+                                <div className="mt-8">
+                                    <div className="text-sm font-bold text-gray-800 mb-4">최근 8주 신규 지원</div>
+                                    <div className="flex items-end gap-2 h-28">
+                                        {weeklyTrend.map((week) => (
+                                            <div key={week.label} className="flex-1 flex flex-col items-center justify-end min-w-0">
+                                                <div className="text-[11px] font-bold text-slate-500 mb-1">{week.count}</div>
+                                                <div className="w-full rounded-t bg-slate-300" style={{ height: `${Math.max((week.count / maxTrendCount) * 100, week.count > 0 ? 12 : 4)}%` }}></div>
+                                                <div className="text-[10px] text-slate-400 mt-1 truncate">{week.label}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
                         </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
+                                <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.BarChart className="w-5 h-5 text-gray-400" /> 부서별 지원 현황</h3>
+                                <div className="space-y-6">{departmentStats.length > 0 ? departmentStats.map((dept) => (<div key={dept.name}><div className="flex justify-between text-sm mb-2"><span className="font-medium text-gray-700">{dept.name}</span><span className="text-gray-500">{dept.count}명</span></div><div className="h-3 w-full bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-brand-500 rounded-full" style={{ width: `${dept.rate}%` }}></div></div></div>)) : <div className="text-center text-gray-400 text-sm py-4">진행 중인 공고가 없습니다.</div>}</div>
+                            </div>
+                            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
+                                <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.Zap className="w-5 h-5 text-gray-400" /> 채널별 성과</h3>
+                                <div className="space-y-4">
+                                    {sourceStats.slice(0, 6).map((source) => (
+                                        <div key={source.source} className="border border-slate-100 rounded-xl p-4">
+                                            <div className="flex items-center justify-between gap-3 mb-3">
+                                                <div className="font-bold text-gray-800 truncate">{source.source}</div>
+                                                <div className="text-sm text-slate-500">{source.count}명</div>
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-2 text-xs">
+                                                <div><div className="text-slate-400 mb-1">진행중</div><div className="font-bold text-slate-700">{source.active}명</div></div>
+                                                <div><div className="text-slate-400 mb-1">면접률</div><div className="font-bold text-orange-600">{source.interviewRate}</div></div>
+                                                <div><div className="text-slate-400 mb-1">합격률</div><div className="font-bold text-emerald-600">{source.hireRate}</div></div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {sourceStats.length === 0 && <div className="text-center text-gray-400 text-sm py-4">선택 기간의 지원자 데이터가 없습니다.</div>}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
+                            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+                                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Icons.Briefcase className="w-5 h-5 text-gray-400" /> 공고별 성과와 병목</h3>
+                                <div className="text-xs text-slate-400">리스크 높은 공고 우선 표시</div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead className="text-left text-xs text-slate-400 border-b border-slate-100">
+                                        <tr>
+                                            <th className="pb-3 font-semibold">공고</th>
+                                            <th className="pb-3 font-semibold">부서</th>
+                                            <th className="pb-3 font-semibold text-right">지원</th>
+                                            <th className="pb-3 font-semibold text-right">면접률</th>
+                                            <th className="pb-3 font-semibold text-right">합격률</th>
+                                            <th className="pb-3 font-semibold text-right">일정누락</th>
+                                            <th className="pb-3 font-semibold text-right">상태</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {jobPerformance.map((job) => (
+                                            <tr key={job.id}>
+                                                <td className="py-4 pr-4 font-bold text-slate-800 min-w-48">{job.title}</td>
+                                                <td className="py-4 pr-4 text-slate-500">{job.team}</td>
+                                                <td className="py-4 text-right font-semibold">{job.total}</td>
+                                                <td className="py-4 text-right text-orange-600 font-semibold">{job.interviewRate}</td>
+                                                <td className="py-4 text-right text-emerald-600 font-semibold">{job.hireRate}</td>
+                                                <td className="py-4 text-right">{job.missingSchedule}</td>
+                                                <td className="py-4 text-right">
+                                                    <span className={`px-2 py-1 rounded text-xs font-bold ${job.riskScore > 0 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>{job.riskScore > 0 ? '점검필요' : '정상'}</span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        {jobPerformance.length === 0 && (
+                                            <tr><td colSpan="7" className="py-8 text-center text-slate-400">진행 중인 공고가 없습니다.</td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                             <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.Zap className="w-5 h-5 text-gray-400" /> 가장 많이 요구되는 기술 스택 (TOP 5)</h3>
-                                <div className="space-y-4">{skillCounts.map(([skill, count], i) => (<div key={i} className="flex items-center gap-4"><div className="w-24 text-sm font-medium text-gray-600 truncate">{skill}</div><div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full animate-grow-width" style={{ '--target-width': `${(count / (skillCounts[0][1] || 1)) * 100}%` }}></div></div><div className="w-8 text-right text-xs font-bold text-indigo-600">{count}건</div></div>))}{skillCounts.length === 0 && <div className="text-center text-gray-400 text-sm py-4">데이터가 충분하지 않습니다.</div>}</div></div>
+                                <div className="space-y-4">{skillCounts.map(([skill, count], i) => (<div key={i} className="flex items-center gap-4"><div className="w-24 text-sm font-medium text-gray-600 truncate">{skill}</div><div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full" style={{ width: `${(count / (skillCounts[0][1] || 1)) * 100}%` }}></div></div><div className="w-8 text-right text-xs font-bold text-indigo-600">{count}건</div></div>))}{skillCounts.length === 0 && <div className="text-center text-gray-400 text-sm py-4">데이터가 충분하지 않습니다.</div>}</div></div>
                             <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.Clock className="w-5 h-5 text-gray-400" /> 실시간 지원 현황 (최근 5건)</h3>
-                                <div className="space-y-0 divide-y divide-gray-50">{recentActivities.map((log, i) => (<div key={i} className="py-4 flex items-center justify-between first:pt-0 last:pb-0"><div className="flex items-center gap-3"><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold bg-gray-100 text-gray-600`}>{log.name[0]}</div><div><div className="text-sm font-bold text-gray-800">{log.name}</div><div className="text-xs text-gray-500 truncate w-40">{log.jobTitle}</div></div></div><div className="text-right"><Badge colorClass="bg-blue-50 text-blue-600 border-blue-100">{log.status}</Badge><div className="text-xs text-gray-400 mt-1">{formatCandidateAddedAt(log)}</div></div></div>))}{recentActivities.length === 0 && <div className="text-center text-gray-400 text-sm py-4">최근 활동 내역이 없습니다.</div>}</div></div>
+                                <div className="space-y-0 divide-y divide-gray-50">{recentActivities.map((record, i) => { const log = record.candidate; return (<div key={`${record.jobId}-${log.id || i}`} className="py-4 flex items-center justify-between first:pt-0 last:pb-0"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold bg-gray-100 text-gray-600">{(log.name || '?')[0]}</div><div><div className="text-sm font-bold text-gray-800">{log.name}</div><div className="text-xs text-gray-500 truncate w-40">{record.jobTitle}</div></div></div><div className="text-right"><Badge colorClass="bg-blue-50 text-blue-600 border-blue-100">{log.status}</Badge><div className="text-xs text-gray-400 mt-1">{formatCandidateAddedAt(log)}</div></div></div>); })}{recentActivities.length === 0 && <div className="text-center text-gray-400 text-sm py-4">최근 활동 내역이 없습니다.</div>}</div></div>
                         </div>
                     </div>
                 );
@@ -1319,6 +1609,7 @@
                             candidate.name,
                             candidate.email,
                             candidate.phone,
+                            candidate.source,
                             candidate.address,
                             candidate.note,
                             candidate.status
@@ -1415,6 +1706,7 @@
                                                                     <div className="flex justify-between items-start mb-2 pr-6"><h4 className="font-bold text-gray-800">{c.name}</h4><span className="text-xs font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{formatCandidateAddedAt(c)}</span></div>
                                                                     <div className="text-xs text-gray-500 mb-2 truncate">{c.email}</div>
                                                                     <div className="text-xs text-gray-400 mb-3 truncate">{c.phone}</div>
+                                                                    <div className="mb-2 inline-flex items-center px-2 py-1 rounded text-xs font-bold bg-slate-100 text-slate-600">{c.source || '지원경로 미기록'}</div>
                                                                     {requestLabel && <div className={`mb-2 inline-flex items-center px-2 py-1 rounded text-xs font-bold ${requestColor}`}>{requestLabel}</div>}
                                                                     {c.interviewDate && <div className="mb-2 inline-flex items-center bg-orange-50 text-orange-700 px-2 py-1 rounded text-xs font-bold"><Icons.Calendar className="w-3 h-3 mr-1"/>{new Date(c.interviewDate).toLocaleString('ko-KR', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'})}</div>}
                                                                     {!c.interviewDate && (c.status.includes('면접')) && <div className="mb-2 inline-flex items-center text-gray-400 text-xs"><Icons.Calendar className="w-3 h-3 mr-1"/>일정 미정</div>}
@@ -1514,6 +1806,12 @@
                             <div><label className="block text-sm font-bold mb-1">이름</label><input name="name" required className="w-full border p-2.5 rounded-lg" /></div>
                             <div><label className="block text-sm font-bold mb-1">이메일</label><input name="email" type="email" className="w-full border p-2.5 rounded-lg" /></div>
                             <div><label className="block text-sm font-bold mb-1">연락처</label><input name="phone" className="w-full border p-2.5 rounded-lg" placeholder="010-0000-0000" /></div>
+                            <div>
+                                <label className="block text-sm font-bold mb-1">지원 경로</label>
+                                <select name="source" defaultValue="사람인" className="w-full border p-2.5 rounded-lg">
+                                    {CANDIDATE_SOURCES.map((source) => <option key={source}>{source}</option>)}
+                                </select>
+                            </div>
                             <div><label className="block text-sm font-bold mb-1">주소지 (간략)</label><input name="address" className="w-full border p-2.5 rounded-lg" placeholder="서울시 강남구" /></div>
                             <div><label className="block text-sm font-bold mb-1">비고</label><textarea name="note" rows="3" className="w-full border p-2.5 rounded-lg" placeholder="특이사항 입력"></textarea></div>
                             <div className="flex justify-end"><button className="bg-brand-600 text-white px-6 py-2 rounded-xl font-bold">등록하기</button></div>
@@ -1523,7 +1821,7 @@
                         <div className="space-y-4">
                             <div className="p-4 rounded-lg bg-blue-50 border border-blue-100">
                                 <div className="text-sm text-blue-800 font-semibold mb-1">업로드 안내</div>
-                                <div className="text-xs text-blue-700">CSV, XLSX 파일을 지원합니다. 필수 컬럼은 `이름` + (`이메일` 또는 `연락처`)입니다.</div>
+                                <div className="text-xs text-blue-700">CSV, XLSX 파일을 지원합니다. 필수 컬럼은 `이름` + (`이메일` 또는 `연락처`)이며, `지원경로`를 넣으면 채널별 성과 분석에 반영됩니다.</div>
                             </div>
                             <div className="flex flex-wrap gap-2">
                                 <button type="button" onClick={downloadCandidateTemplate} className="px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white hover:bg-gray-50">양식 다운로드 (CSV)</button>
@@ -1576,10 +1874,14 @@
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                     <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
                                         <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><Icons.MapPin className="w-4 h-4 text-orange-500"/> 주소지</h4>
                                         <p className="text-sm text-gray-600">{selectedCandidate.address || '정보 없음'}</p>
+                                    </div>
+                                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+                                        <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><Icons.Zap className="w-4 h-4 text-indigo-500"/> 지원 경로</h4>
+                                        <p className="text-sm text-gray-600">{selectedCandidate.source || '지원경로 미기록'}</p>
                                     </div>
                                     <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
                                         <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><Icons.Clock className="w-4 h-4 text-blue-500"/> 등록 정보</h4>
