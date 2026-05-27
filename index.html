@@ -1444,12 +1444,14 @@
                                     <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Icons.Layout className="w-5 h-5 text-gray-400" /> 채용 파이프라인 분포</h3>
                                     <div className="text-xs text-slate-400">선택 기간 기준</div>
                                 </div>
-                                <div className="flex items-end justify-between h-56 gap-2">
+                                <div className="grid grid-cols-6 gap-3 h-64">
                                     {stageStats.map((item) => (
-                                        <div key={item.stage} className="flex-1 flex flex-col justify-end items-center group min-w-0">
-                                            <div className="mb-2 text-xs font-bold text-brand-600">{item.count}명</div>
-                                            <div className="w-full bg-brand-100 rounded-t-lg transition-all hover:bg-brand-400 relative group-hover:shadow-lg" style={{ height: `${item.height}%` }}></div>
-                                            <div className="mt-3 text-xs text-gray-500 font-medium whitespace-nowrap">{item.stage}</div>
+                                        <div key={item.stage} className="h-full min-w-0 flex flex-col items-center">
+                                            <div className="flex-1 w-full flex items-end justify-center">
+                                                <div className="w-full max-w-20 rounded-t-lg bg-brand-500/85 hover:bg-brand-600 transition-all shadow-sm" style={{ height: `${item.height}%` }}></div>
+                                            </div>
+                                            <div className="mt-3 text-xs font-bold text-brand-600">{item.count}명</div>
+                                            <div className="mt-2 text-xs text-gray-600 font-medium whitespace-nowrap">{item.stage}</div>
                                             <div className="text-[11px] text-gray-400 mt-1">{item.rate}</div>
                                         </div>
                                     ))}
@@ -1549,6 +1551,159 @@
                                 <div className="space-y-4">{skillCounts.map(([skill, count], i) => (<div key={i} className="flex items-center gap-4"><div className="w-24 text-sm font-medium text-gray-600 truncate">{skill}</div><div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full" style={{ width: `${(count / (skillCounts[0][1] || 1)) * 100}%` }}></div></div><div className="w-8 text-right text-xs font-bold text-indigo-600">{count}건</div></div>))}{skillCounts.length === 0 && <div className="text-center text-gray-400 text-sm py-4">데이터가 충분하지 않습니다.</div>}</div></div>
                             <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.Clock className="w-5 h-5 text-gray-400" /> 실시간 지원 현황 (최근 5건)</h3>
                                 <div className="space-y-0 divide-y divide-gray-50">{recentActivities.map((record, i) => { const log = record.candidate; return (<div key={`${record.jobId}-${log.id || i}`} className="py-4 flex items-center justify-between first:pt-0 last:pb-0"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold bg-gray-100 text-gray-600">{(log.name || '?')[0]}</div><div><div className="text-sm font-bold text-gray-800">{log.name}</div><div className="text-xs text-gray-500 truncate w-40">{record.jobTitle}</div></div></div><div className="text-right"><Badge colorClass="bg-blue-50 text-blue-600 border-blue-100">{log.status}</Badge><div className="text-xs text-gray-400 mt-1">{formatCandidateAddedAt(log)}</div></div></div>); })}{recentActivities.length === 0 && <div className="text-center text-gray-400 text-sm py-4">최근 활동 내역이 없습니다.</div>}</div></div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const CandidatePoolView = () => {
+                const [query, setQuery] = useState('');
+                const [stageFilter, setStageFilter] = useState('all');
+                const [sourceFilter, setSourceFilter] = useState('all');
+                const records = useMemo(() => {
+                    return liveJobs.flatMap((job) => (job.candidates || []).map((candidate) => ({
+                        candidate,
+                        jobId: job.id,
+                        jobTitle: job.title || '-',
+                        team: job.team || '미지정',
+                        source: candidate.source || '미기록'
+                    })));
+                }, [liveJobs]);
+                const sourceOptions = useMemo(() => {
+                    return Array.from(new Set(records.map((record) => record.source))).sort();
+                }, [records]);
+                const filteredRecords = useMemo(() => {
+                    const q = query.trim().toLowerCase();
+                    return records.filter((record) => {
+                        const candidate = record.candidate;
+                        const haystack = [
+                            candidate.name,
+                            candidate.email,
+                            candidate.phone,
+                            candidate.address,
+                            candidate.note,
+                            candidate.status,
+                            record.jobTitle,
+                            record.team,
+                            record.source
+                        ].join(' ').toLowerCase();
+                        const matchesQuery = !q || haystack.includes(q);
+                        const matchesStage = stageFilter === 'all' || candidate.status === stageFilter;
+                        const matchesSource = sourceFilter === 'all' || record.source === sourceFilter;
+                        return matchesQuery && matchesStage && matchesSource;
+                    }).sort((a, b) => (getCandidateAddedDate(b.candidate)?.getTime() || 0) - (getCandidateAddedDate(a.candidate)?.getTime() || 0));
+                }, [records, query, stageFilter, sourceFilter]);
+                const poolStats = [
+                    { label: '전체 지원자', value: records.length, tone: 'text-slate-900' },
+                    { label: '진행중', value: records.filter(({ candidate }) => !isFinalCandidate(candidate)).length, tone: 'text-brand-600' },
+                    { label: '면접 단계', value: records.filter(({ candidate }) => isInterviewCandidate(candidate)).length, tone: 'text-orange-600' },
+                    { label: '합격자', value: records.filter(({ candidate }) => candidate.status === '최종합격').length, tone: 'text-emerald-600' }
+                ];
+
+                return (
+                    <div className="p-8 animate-fade-in-up h-full overflow-y-auto pb-20 custom-scrollbar">
+                        <div className="flex flex-wrap items-end justify-between gap-4 mb-8">
+                            <div>
+                                <h2 className="text-2xl font-bold text-gray-800">전체 지원자</h2>
+                                <p className="text-gray-500 mt-1">공고를 넘나들며 지원자 풀을 검색하고 상태를 확인합니다.</p>
+                            </div>
+                            <div className="text-sm text-slate-500">{filteredRecords.length} / {records.length}명 표시</div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                            {poolStats.map((stat) => (
+                                <div key={stat.label} className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm">
+                                    <div className={`text-2xl font-bold ${stat.tone}`}>{stat.value}<span className="text-sm text-slate-400 ml-1">명</span></div>
+                                    <div className="text-sm text-slate-500 mt-1">{stat.label}</div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="bg-white border border-slate-200 rounded-xl p-4 mb-6 flex flex-col xl:flex-row gap-3">
+                            <div className="relative flex-1">
+                                <Icons.Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                <input value={query} onChange={(e) => setQuery(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-brand-500" placeholder="이름, 연락처, 이메일, 공고명, 메모 검색" />
+                            </div>
+                            <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white">
+                                <option value="all">전체 단계</option>
+                                {STAGES.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                            </select>
+                            <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white">
+                                <option value="all">전체 경로</option>
+                                {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
+                            </select>
+                        </div>
+
+                        <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-slate-50 text-left text-xs text-slate-500">
+                                        <tr>
+                                            <th className="px-5 py-3 font-semibold">지원자</th>
+                                            <th className="px-5 py-3 font-semibold">공고</th>
+                                            <th className="px-5 py-3 font-semibold">부서</th>
+                                            <th className="px-5 py-3 font-semibold">지원 경로</th>
+                                            <th className="px-5 py-3 font-semibold">상태</th>
+                                            <th className="px-5 py-3 font-semibold">등록일</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {filteredRecords.map((record) => {
+                                            const candidate = record.candidate;
+                                            return (
+                                                <tr key={`${record.jobId}-${candidate.id}`} onClick={() => { setActiveJobId(record.jobId); setSelectedCandidate(candidate); setIsCandidateModalOpen(true); }} className="hover:bg-brand-50/40 cursor-pointer">
+                                                    <td className="px-5 py-4">
+                                                        <div className="font-bold text-slate-800">{candidate.name}</div>
+                                                        <div className="text-xs text-slate-400 mt-1">{candidate.email || candidate.phone || '-'}</div>
+                                                    </td>
+                                                    <td className="px-5 py-4 text-slate-700 min-w-48">{record.jobTitle}</td>
+                                                    <td className="px-5 py-4 text-slate-500">{record.team}</td>
+                                                    <td className="px-5 py-4"><span className="px-2 py-1 rounded bg-slate-100 text-slate-600 text-xs font-bold">{record.source}</span></td>
+                                                    <td className="px-5 py-4"><Badge colorClass="bg-blue-50 text-blue-600 border-blue-100">{candidate.status}</Badge></td>
+                                                    <td className="px-5 py-4 text-slate-500">{formatCandidateAddedAt(candidate)}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                        {filteredRecords.length === 0 && (
+                                            <tr><td colSpan="6" className="py-12 text-center text-slate-400">조건에 맞는 지원자가 없습니다.</td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const ReportCenter = () => {
+                const totalCandidates = liveJobs.reduce((acc, job) => acc + (job.candidates || []).length, 0);
+                const hired = liveJobs.reduce((acc, job) => acc + (job.candidates || []).filter((c) => c.status === '최종합격').length, 0);
+                const interviews = liveJobs.reduce((acc, job) => acc + (job.candidates || []).filter((c) => isInterviewCandidate(c) || c.status === '최종합격').length, 0);
+                const reportCards = [
+                    { title: '주간 CSV', desc: '단계, 채널, 공고별 성과를 CSV로 내려받습니다.', action: exportWeeklyReportCsv, button: 'CSV 다운로드', icon: Icons.FileText },
+                    { title: '요약 인쇄', desc: '운영 회의용 핵심 지표와 리스크 목록을 출력합니다.', action: printWeeklySummary, button: '요약 인쇄', icon: Icons.BarChart },
+                    { title: '경영진 1페이지', desc: '경영진 공유용 1페이지 리포트를 생성합니다.', action: printExecutiveOnePage, button: '1페이지 출력', icon: Icons.TrendingUp }
+                ];
+                return (
+                    <div className="p-8 animate-fade-in-up h-full overflow-y-auto pb-20 custom-scrollbar">
+                        <div className="mb-8">
+                            <h2 className="text-2xl font-bold text-gray-800">리포트 센터</h2>
+                            <p className="text-gray-500 mt-1">정기 보고와 의사결정 공유에 필요한 산출물을 모았습니다.</p>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                            <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm"><div className="text-sm text-slate-500">전체 지원자</div><div className="text-3xl font-bold mt-2">{totalCandidates}명</div></div>
+                            <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm"><div className="text-sm text-slate-500">면접 도달률</div><div className="text-3xl font-bold mt-2 text-orange-600">{percentLabel(interviews, totalCandidates)}</div></div>
+                            <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm"><div className="text-sm text-slate-500">합격률</div><div className="text-3xl font-bold mt-2 text-emerald-600">{percentLabel(hired, totalCandidates)}</div></div>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            {reportCards.map((card) => (
+                                <div key={card.title} className="bg-white border border-gray-100 rounded-2xl p-6 shadow-sm">
+                                    <div className="w-11 h-11 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center mb-5"><card.icon className="w-5 h-5" /></div>
+                                    <h3 className="font-bold text-lg text-slate-900">{card.title}</h3>
+                                    <p className="text-sm text-slate-500 mt-2 min-h-10">{card.desc}</p>
+                                    <button onClick={card.action} className="mt-6 w-full px-4 py-2.5 rounded-lg bg-slate-900 text-white text-sm font-bold hover:bg-slate-800">{card.button}</button>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 );
@@ -1743,6 +1898,8 @@
                 if (viewMode === 'detail' && activeJob) return <JobDetail />;
                 switch (currentMenu) {
                     case 'dashboard': return <AdvancedDashboard />;
+                    case 'candidates': return <CandidatePoolView />;
+                    case 'reports': return <ReportCenter />;
                     case 'active': return <JobList type="active" />;
                     case 'closed': return <JobList type="closed" />;
                     case 'trash': return <JobList type="trash" />;
@@ -1762,19 +1919,42 @@
                             <div className="w-8 h-8 bg-brand-500 rounded flex items-center justify-center font-bold text-white">R</div>
                             <span className="font-bold text-lg">Recruit<span className="text-brand-400">Pro</span></span>
                         </div>
-                        <div className="p-4 flex-1 space-y-1">
-                            <div className="text-xs font-bold text-slate-500 mb-4 px-2">메인 메뉴</div>
+                        <div className="p-4 flex-1 space-y-6 overflow-y-auto custom-scrollbar">
                             {[
-                                { id: 'dashboard', label: '대시보드', icon: Icons.Activity },
-                                { id: 'active', label: '진행중인 공고', icon: Icons.Briefcase },
-                                { id: 'closed', label: '마감된 공고', icon: Icons.Archive },
-                                { id: 'calendar', label: '면접 일정', icon: Icons.Calendar },
-                                { id: 'trash', label: `휴지통 (${trashJobs.length})`, icon: Icons.Trash2 }
-                            ].map(menu => (
-                                <button key={menu.id} onClick={() => { setCurrentMenu(menu.id); setViewMode('list'); setActiveJobId(null); }} 
-                                        className={`w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-colors ${currentMenu === menu.id ? 'bg-brand-600 text-white shadow-lg shadow-brand-900/50' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
-                                    <menu.icon className="w-5 h-5" /> {menu.label}
-                                </button>
+                                {
+                                    title: '분석',
+                                    menus: [
+                                        { id: 'dashboard', label: '대시보드', icon: Icons.Activity },
+                                        { id: 'reports', label: '리포트 센터', icon: Icons.FileText }
+                                    ]
+                                },
+                                {
+                                    title: '운영',
+                                    menus: [
+                                        { id: 'active', label: '진행중인 공고', icon: Icons.Briefcase, count: activeJobs.length },
+                                        { id: 'candidates', label: '전체 지원자', icon: Icons.Users, count: liveJobs.reduce((acc, job) => acc + (job.candidates || []).length, 0) },
+                                        { id: 'calendar', label: '면접 일정', icon: Icons.Calendar, count: scheduleAlerts.todayInterviews.length }
+                                    ]
+                                },
+                                {
+                                    title: '보관',
+                                    menus: [
+                                        { id: 'closed', label: '마감된 공고', icon: Icons.Archive, count: closedJobs.length },
+                                        { id: 'trash', label: '휴지통', icon: Icons.Trash2, count: trashJobs.length }
+                                    ]
+                                }
+                            ].map((section) => (
+                                <div key={section.title} className="space-y-1">
+                                    <div className="text-xs font-bold text-slate-500 mb-2 px-2">{section.title}</div>
+                                    {section.menus.map((menu) => (
+                                        <button key={menu.id} onClick={() => { setCurrentMenu(menu.id); setViewMode('list'); setActiveJobId(null); }} 
+                                                className={`w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-colors ${currentMenu === menu.id ? 'bg-brand-600 text-white shadow-lg shadow-brand-900/50' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
+                                            <menu.icon className="w-5 h-5 shrink-0" />
+                                            <span className="flex-1 truncate">{menu.label}</span>
+                                            {Number.isFinite(menu.count) && <span className={`text-[11px] px-2 py-0.5 rounded-full ${currentMenu === menu.id ? 'bg-white/20 text-white' : 'bg-slate-800 text-slate-400'}`}>{menu.count}</span>}
+                                        </button>
+                                    ))}
+                                </div>
                             ))}
                         </div>
                     </div>
