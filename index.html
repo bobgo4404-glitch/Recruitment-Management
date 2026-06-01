@@ -184,6 +184,17 @@
             responded: '사람인 응답 확인',
             confirmed: '일정확정'
         };
+        const OFFER_LETTER_STATUS_OPTIONS = [
+            { id: 'pending', label: '발송전' },
+            { id: 'sent', label: '발송완료' },
+            { id: 'replied', label: '회신완료' }
+        ];
+        const ONBOARDING_MAIL_STATUS_OPTIONS = [
+            { id: 'pending', label: '발송전' },
+            { id: 'sent', label: '발송완료' },
+            { id: 'received', label: '자료회신' }
+        ];
+        const getOptionLabel = (options, id) => options.find((option) => option.id === id)?.label || id || '-';
         const generateId = () => Math.random().toString(36).substr(2, 9);
         const getScheduleRequestStatus = (candidate) => candidate?.scheduleRequest?.status || 'draft';
         const isInterviewCandidate = (candidate) => String(candidate?.status || '').includes('면접');
@@ -255,21 +266,25 @@
             const history = getOpsHistory(candidate, 'offerLetter');
             const sentAt = offerLetter.sentAt || findLatestOpsAt(history, 'sent');
             const repliedAt = offerLetter.repliedAt || findLatestOpsAt(history, 'reply');
+            const explicitStatus = ['pending', 'sent', 'replied'].includes(offerLetter.status) ? offerLetter.status : '';
             return {
                 history,
                 sentAt,
                 repliedAt,
-                status: repliedAt ? 'replied' : sentAt ? 'sent' : 'pending'
+                status: explicitStatus || (repliedAt ? 'replied' : sentAt ? 'sent' : 'pending')
             };
         };
         const getOnboardingMailState = (candidate) => {
             const onboardingMail = candidate?.onboardingMail || {};
             const history = getOpsHistory(candidate, 'onboardingMail');
             const sentAt = onboardingMail.sentAt || findLatestOpsAt(history, 'sent');
+            const receivedAt = onboardingMail.receivedAt || findLatestOpsAt(history, 'received');
+            const explicitStatus = ['pending', 'sent', 'received'].includes(onboardingMail.status) ? onboardingMail.status : '';
             return {
                 history,
                 sentAt,
-                status: sentAt ? 'sent' : 'pending'
+                receivedAt,
+                status: explicitStatus || (receivedAt ? 'received' : sentAt ? 'sent' : 'pending')
             };
         };
         
@@ -492,24 +507,41 @@
                         return bTime - aTime;
                     });
             }, [liveJobs]);
+            const onboardingCandidateRecords = useMemo(() => {
+                return offerLetterCandidateRecords
+                    .filter(({ candidate }) => getOfferLetterState(candidate).status === 'replied')
+                    .sort((a, b) => {
+                        const aMail = getOnboardingMailState(a.candidate);
+                        const bMail = getOnboardingMailState(b.candidate);
+                        const aOffer = getOfferLetterState(a.candidate);
+                        const bOffer = getOfferLetterState(b.candidate);
+                        const aTime = new Date(aMail.receivedAt || aMail.sentAt || aOffer.repliedAt || 0).getTime() || 0;
+                        const bTime = new Date(bMail.receivedAt || bMail.sentAt || bOffer.repliedAt || 0).getTime() || 0;
+                        return bTime - aTime;
+                    });
+            }, [offerLetterCandidateRecords]);
             const postHireStats = useMemo(() => {
                 const total = hiredCandidateRecords.length;
                 const offerTotal = offerLetterCandidateRecords.length;
-                const offerSent = offerLetterCandidateRecords.filter(({ candidate }) => getOfferLetterState(candidate).sentAt).length;
-                const offerReplied = offerLetterCandidateRecords.filter(({ candidate }) => getOfferLetterState(candidate).repliedAt).length;
-                const hiredOfferReplied = hiredCandidateRecords.filter(({ candidate }) => getOfferLetterState(candidate).repliedAt).length;
-                const onboardingSent = hiredCandidateRecords.filter(({ candidate }) => getOnboardingMailState(candidate).sentAt).length;
+                const offerPending = offerLetterCandidateRecords.filter(({ candidate }) => getOfferLetterState(candidate).status === 'pending').length;
+                const offerSent = offerLetterCandidateRecords.filter(({ candidate }) => getOfferLetterState(candidate).status === 'sent').length;
+                const offerReplied = offerLetterCandidateRecords.filter(({ candidate }) => getOfferLetterState(candidate).status === 'replied').length;
+                const onboardingTotal = onboardingCandidateRecords.length;
+                const onboardingPending = onboardingCandidateRecords.filter(({ candidate }) => getOnboardingMailState(candidate).status === 'pending').length;
+                const onboardingSent = onboardingCandidateRecords.filter(({ candidate }) => getOnboardingMailState(candidate).status === 'sent').length;
+                const onboardingReceived = onboardingCandidateRecords.filter(({ candidate }) => getOnboardingMailState(candidate).status === 'received').length;
                 return {
                     total,
                     offerTotal,
-                    offerPending: offerTotal - offerSent,
+                    offerPending,
                     offerSent,
                     offerReplied,
-                    onboardingReady: hiredOfferReplied,
-                    onboardingPending: Math.max(hiredOfferReplied - onboardingSent, 0),
-                    onboardingSent
+                    onboardingTotal,
+                    onboardingPending,
+                    onboardingSent,
+                    onboardingReceived
                 };
-            }, [hiredCandidateRecords, offerLetterCandidateRecords]);
+            }, [hiredCandidateRecords, offerLetterCandidateRecords, onboardingCandidateRecords]);
             const scheduleAlerts = useMemo(() => {
                 const today = toDateOnly(new Date());
                 const weekEnd = new Date();
@@ -911,6 +943,72 @@
                     return appendCandidateHistory(nextCandidate, '입사 서류 안내 메일 발송 기록', nowIso);
                 });
                 if (updatedCandidates) alert('입사안내메일 발송 이력을 기록했습니다.');
+            };
+            const handleOfferLetterStatusChange = async (record, nextStatus) => {
+                if (!record?.jobId || !record?.candidate?.id || !['pending', 'sent', 'replied'].includes(nextStatus)) return;
+                const currentState = getOfferLetterState(record.candidate);
+                if (currentState.status === nextStatus) return;
+                const nowIso = new Date().toISOString();
+                await updatePostHireCandidateRecord(record.jobId, record.candidate.id, (candidate) => {
+                    const prevState = getOfferLetterState(candidate);
+                    const currentOffer = candidate.offerLetter || {};
+                    const nextOffer = {
+                        ...currentOffer,
+                        status: nextStatus,
+                        sentAt: nextStatus === 'pending' ? '' : (currentOffer.sentAt || prevState.sentAt || nowIso),
+                        repliedAt: nextStatus === 'replied' ? (currentOffer.repliedAt || prevState.repliedAt || nowIso) : ''
+                    };
+                    const historyEntry = {
+                        id: generateId(),
+                        type: 'status',
+                        at: nowIso,
+                        from: prevState.status,
+                        to: nextStatus,
+                        note: `오퍼레터 상태 변경: ${getOptionLabel(OFFER_LETTER_STATUS_OPTIONS, prevState.status)} → ${getOptionLabel(OFFER_LETTER_STATUS_OPTIONS, nextStatus)}`
+                    };
+                    const nextCandidate = {
+                        ...candidate,
+                        offerLetter: {
+                            ...nextOffer,
+                            history: [historyEntry, ...getOpsHistory(candidate, 'offerLetter')].slice(0, 50)
+                        }
+                    };
+                    return appendCandidateHistory(nextCandidate, historyEntry.note, nowIso);
+                });
+            };
+            const handleOnboardingMailStatusChange = async (record, nextStatus) => {
+                if (!record?.jobId || !record?.candidate?.id || !['pending', 'sent', 'received'].includes(nextStatus)) return;
+                const offerState = getOfferLetterState(record.candidate);
+                if (offerState.status !== 'replied') return;
+                const currentState = getOnboardingMailState(record.candidate);
+                if (currentState.status === nextStatus) return;
+                const nowIso = new Date().toISOString();
+                await updatePostHireCandidateRecord(record.jobId, record.candidate.id, (candidate) => {
+                    const prevState = getOnboardingMailState(candidate);
+                    const currentMail = candidate.onboardingMail || {};
+                    const nextMail = {
+                        ...currentMail,
+                        status: nextStatus,
+                        sentAt: nextStatus === 'pending' ? '' : (currentMail.sentAt || prevState.sentAt || nowIso),
+                        receivedAt: nextStatus === 'received' ? (currentMail.receivedAt || prevState.receivedAt || nowIso) : ''
+                    };
+                    const historyEntry = {
+                        id: generateId(),
+                        type: 'status',
+                        at: nowIso,
+                        from: prevState.status,
+                        to: nextStatus,
+                        note: `입사안내메일 상태 변경: ${getOptionLabel(ONBOARDING_MAIL_STATUS_OPTIONS, prevState.status)} → ${getOptionLabel(ONBOARDING_MAIL_STATUS_OPTIONS, nextStatus)}`
+                    };
+                    const nextCandidate = {
+                        ...candidate,
+                        onboardingMail: {
+                            ...nextMail,
+                            history: [historyEntry, ...getOpsHistory(candidate, 'onboardingMail')].slice(0, 50)
+                        }
+                    };
+                    return appendCandidateHistory(nextCandidate, historyEntry.note, nowIso);
+                });
             };
             const handleDeleteJob = async (id, e) => {
                 e.stopPropagation();
@@ -1966,27 +2064,15 @@
                         alert('오퍼레터 신규 대상자를 추가했습니다.');
                     }
                 };
-                const handleOfferCandidateStatusChange = async (record, nextStatus) => {
-                    if (!record?.jobId || !record?.candidate?.id || !STAGES.includes(nextStatus)) return;
-                    const currentStatus = record.candidate.status || '';
-                    if (currentStatus === nextStatus) return;
-                    const nowIso = new Date().toISOString();
-                    await updatePostHireCandidateRecord(record.jobId, record.candidate.id, (candidate) => {
-                        if (candidate.status === nextStatus) return candidate;
-                        return appendCandidateHistory({ ...candidate, status: nextStatus }, `오퍼레터 화면 단계 변경: ${candidate.status || '-'} → ${nextStatus}`, nowIso);
-                    });
-                };
                 const filterOptions = [
                     { id: 'all', label: '전체' },
-                    { id: 'pending', label: '발송 전' },
-                    { id: 'sent', label: '회신 대기' },
-                    { id: 'replied', label: '회신 완료' }
+                    ...OFFER_LETTER_STATUS_OPTIONS
                 ];
                 const stats = [
                     { label: '오퍼 대상', value: postHireStats.offerTotal, tone: 'text-slate-900' },
-                    { label: '발송 전', value: postHireStats.offerPending, tone: 'text-orange-600' },
-                    { label: '회신 대기', value: Math.max(postHireStats.offerSent - postHireStats.offerReplied, 0), tone: 'text-blue-600' },
-                    { label: '회신 완료', value: postHireStats.offerReplied, tone: 'text-emerald-600' }
+                    { label: '발송전', value: postHireStats.offerPending, tone: 'text-orange-600' },
+                    { label: '발송완료', value: postHireStats.offerSent, tone: 'text-blue-600' },
+                    { label: '회신완료', value: postHireStats.offerReplied, tone: 'text-emerald-600' }
                 ];
 
                 return (
@@ -2039,22 +2125,14 @@
                                         <tr>
                                             <th className="px-5 py-3 font-semibold">대상자</th>
                                             <th className="px-5 py-3 font-semibold">공고</th>
-                                            <th className="px-5 py-3 font-semibold">현재 단계</th>
-                                            <th className="px-5 py-3 font-semibold">오퍼레터 발송</th>
-                                            <th className="px-5 py-3 font-semibold">회신</th>
+                                            <th className="px-5 py-3 font-semibold">오퍼레터 상태</th>
                                             <th className="px-5 py-3 font-semibold">최근 이력</th>
-                                            <th className="px-5 py-3 font-semibold text-right">작업</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-50">
                                         {filteredRecords.map((record) => {
                                             const candidate = record.candidate;
                                             const offerState = getOfferLetterState(candidate);
-                                            const statusBadge = offerState.status === 'replied'
-                                                ? { label: '회신 완료', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' }
-                                                : offerState.status === 'sent'
-                                                    ? { label: '회신 대기', color: 'bg-blue-50 text-blue-600 border-blue-100' }
-                                                    : { label: '발송 전', color: 'bg-orange-50 text-orange-600 border-orange-100' };
                                             return (
                                                 <tr key={`${record.jobId}-${candidate.id}`} onClick={() => { setActiveJobId(record.jobId); setSelectedCandidate(candidate); setIsCandidateModalOpen(true); }} className="hover:bg-brand-50/40 cursor-pointer">
                                                     <td className="px-5 py-4 min-w-48">
@@ -2068,26 +2146,24 @@
                                                         <div className="font-medium text-slate-700">{record.jobTitle}</div>
                                                         <div className="text-xs text-slate-400 mt-1">{record.team}</div>
                                                     </td>
-                                                    <td className="px-5 py-4 min-w-36">
+                                                    <td className="px-5 py-4 min-w-40">
                                                         <select
-                                                            value={candidate.status || '접수'}
+                                                            value={offerState.status}
                                                             onClick={(e) => e.stopPropagation()}
-                                                            onChange={(e) => handleOfferCandidateStatusChange(record, e.target.value)}
+                                                            onChange={(e) => handleOfferLetterStatusChange(record, e.target.value)}
                                                             className="w-full border border-slate-200 rounded-lg px-2 py-2 text-xs font-bold bg-white text-slate-700 outline-none focus:ring-2 focus:ring-brand-500"
                                                         >
-                                                            {STAGES.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                                                            {OFFER_LETTER_STATUS_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
                                                         </select>
+                                                        <div className="text-xs text-slate-400 mt-2">
+                                                            {offerState.status === 'replied' ? formatDateTimeLabel(offerState.repliedAt) : offerState.status === 'sent' ? formatDateTimeLabel(offerState.sentAt) : '-'}
+                                                        </div>
                                                     </td>
-                                                    <td className="px-5 py-4">
-                                                        <Badge colorClass={statusBadge.color}>{statusBadge.label}</Badge>
-                                                        <div className="text-xs text-slate-400 mt-2">{formatDateTimeLabel(offerState.sentAt)}</div>
-                                                    </td>
-                                                    <td className="px-5 py-4 text-slate-600">{formatDateTimeLabel(offerState.repliedAt)}</td>
                                                     <td className="px-5 py-4 min-w-64">
                                                         <div className="space-y-1">
                                                             {offerState.history.slice(0, 2).map((item) => (
                                                                 <div key={item.id || item.at} className="text-xs text-slate-500">
-                                                                    <span className="font-bold text-slate-700">{item.type === 'reply' ? '회신' : item.type === 'manual_add' ? '수동추가' : '발송'}</span>
+                                                                    <span className="font-bold text-slate-700">{item.type === 'status' ? '상태변경' : item.type === 'reply' ? '회신완료' : item.type === 'manual_add' ? '수동추가' : '발송완료'}</span>
                                                                     <span className="mx-1">·</span>
                                                                     <span>{formatDateTimeLabel(item.at)}</span>
                                                                     {item.note && <span className="ml-1 text-slate-400">({item.note})</span>}
@@ -2096,17 +2172,11 @@
                                                             {offerState.history.length === 0 && <div className="text-xs text-slate-400">기록 없음</div>}
                                                         </div>
                                                     </td>
-                                                    <td className="px-5 py-4">
-                                                        <div className="flex justify-end gap-2">
-                                                            <button type="button" onClick={(e) => { e.stopPropagation(); handleRecordOfferSent(record); }} className="px-3 py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700">발송 기록</button>
-                                                            <button type="button" disabled={!offerState.sentAt} onClick={(e) => { e.stopPropagation(); handleRecordOfferReply(record); }} className={`px-3 py-2 rounded-lg text-xs font-bold ${offerState.sentAt ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}>회신 기록</button>
-                                                        </div>
-                                                    </td>
                                                 </tr>
                                             );
                                         })}
                                         {filteredRecords.length === 0 && (
-                                            <tr><td colSpan="7" className="py-12 text-center text-slate-400">조건에 맞는 오퍼레터 대상자가 없습니다.</td></tr>
+                                            <tr><td colSpan="4" className="py-12 text-center text-slate-400">조건에 맞는 오퍼레터 대상자가 없습니다.</td></tr>
                                         )}
                                     </tbody>
                                 </table>
@@ -2208,9 +2278,8 @@
                 const [statusFilter, setStatusFilter] = useState('all');
                 const filteredRecords = useMemo(() => {
                     const q = query.trim().toLowerCase();
-                    return hiredCandidateRecords.filter((record) => {
+                    return onboardingCandidateRecords.filter((record) => {
                         const candidate = record.candidate;
-                        const offerState = getOfferLetterState(candidate);
                         const onboardingState = getOnboardingMailState(candidate);
                         const haystack = [
                             candidate.name,
@@ -2223,23 +2292,19 @@
                         const matchesQuery = !q || haystack.includes(q);
                         const matchesStatus =
                             statusFilter === 'all' ||
-                            (statusFilter === 'ready' && offerState.repliedAt && !onboardingState.sentAt) ||
-                            (statusFilter === 'sent' && onboardingState.sentAt) ||
-                            (statusFilter === 'waitingOffer' && !offerState.repliedAt);
+                            onboardingState.status === statusFilter;
                         return matchesQuery && matchesStatus;
                     });
-                }, [query, statusFilter, hiredCandidateRecords]);
+                }, [query, statusFilter, onboardingCandidateRecords]);
                 const filterOptions = [
                     { id: 'all', label: '전체' },
-                    { id: 'ready', label: '발송 필요' },
-                    { id: 'sent', label: '발송 완료' },
-                    { id: 'waitingOffer', label: '오퍼 회신 전' }
+                    ...ONBOARDING_MAIL_STATUS_OPTIONS
                 ];
                 const stats = [
-                    { label: '오퍼 회신 완료', value: postHireStats.onboardingReady, tone: 'text-emerald-600' },
-                    { label: '발송 필요', value: postHireStats.onboardingPending, tone: 'text-orange-600' },
-                    { label: '발송 완료', value: postHireStats.onboardingSent, tone: 'text-blue-600' },
-                    { label: '오퍼 회신 전', value: Math.max(postHireStats.total - postHireStats.onboardingReady, 0), tone: 'text-slate-600' }
+                    { label: '입사안내 대상', value: postHireStats.onboardingTotal, tone: 'text-slate-900' },
+                    { label: '발송전', value: postHireStats.onboardingPending, tone: 'text-orange-600' },
+                    { label: '발송완료', value: postHireStats.onboardingSent, tone: 'text-blue-600' },
+                    { label: '자료회신', value: postHireStats.onboardingReceived, tone: 'text-emerald-600' }
                 ];
 
                 return (
@@ -2247,9 +2312,9 @@
                         <div className="flex flex-wrap items-end justify-between gap-4 mb-8">
                             <div>
                                 <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Icons.Mail className="w-6 h-6 text-brand-600" /> 입사안내메일</h2>
-                                <p className="text-gray-500 mt-1">오퍼레터 회신이 확인된 최종합격자의 입사 서류 안내 메일 발송 이력을 관리합니다.</p>
+                                <p className="text-gray-500 mt-1">오퍼레터 회신완료 대상자의 입사 서류 안내 메일 발송과 자료회신 상태를 관리합니다.</p>
                             </div>
-                            <div className="text-sm text-slate-500">{filteredRecords.length} / {hiredCandidateRecords.length}명 표시</div>
+                            <div className="text-sm text-slate-500">{filteredRecords.length} / {onboardingCandidateRecords.length}명 표시</div>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -2288,9 +2353,8 @@
                                             <th className="px-5 py-3 font-semibold">대상자</th>
                                             <th className="px-5 py-3 font-semibold">공고</th>
                                             <th className="px-5 py-3 font-semibold">오퍼 회신</th>
-                                            <th className="px-5 py-3 font-semibold">입사안내메일</th>
+                                            <th className="px-5 py-3 font-semibold">입사안내 상태</th>
                                             <th className="px-5 py-3 font-semibold">최근 이력</th>
-                                            <th className="px-5 py-3 font-semibold text-right">작업</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-50">
@@ -2298,12 +2362,6 @@
                                             const candidate = record.candidate;
                                             const offerState = getOfferLetterState(candidate);
                                             const onboardingState = getOnboardingMailState(candidate);
-                                            const ready = !!offerState.repliedAt;
-                                            const mailBadge = onboardingState.sentAt
-                                                ? { label: '발송 완료', color: 'bg-blue-50 text-blue-600 border-blue-100' }
-                                                : ready
-                                                    ? { label: '발송 필요', color: 'bg-orange-50 text-orange-600 border-orange-100' }
-                                                    : { label: '오퍼 회신 전', color: 'bg-slate-100 text-slate-500 border-slate-200' };
                                             return (
                                                 <tr key={`${record.jobId}-${candidate.id}`} onClick={() => { setActiveJobId(record.jobId); setSelectedCandidate(candidate); setIsCandidateModalOpen(true); }} className="hover:bg-brand-50/40 cursor-pointer">
                                                     <td className="px-5 py-4 min-w-48">
@@ -2315,15 +2373,24 @@
                                                         <div className="text-xs text-slate-400 mt-1">{record.team}</div>
                                                     </td>
                                                     <td className="px-5 py-4 text-slate-600">{formatDateTimeLabel(offerState.repliedAt)}</td>
-                                                    <td className="px-5 py-4">
-                                                        <Badge colorClass={mailBadge.color}>{mailBadge.label}</Badge>
-                                                        <div className="text-xs text-slate-400 mt-2">{formatDateTimeLabel(onboardingState.sentAt)}</div>
+                                                    <td className="px-5 py-4 min-w-40">
+                                                        <select
+                                                            value={onboardingState.status}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            onChange={(e) => handleOnboardingMailStatusChange(record, e.target.value)}
+                                                            className="w-full border border-slate-200 rounded-lg px-2 py-2 text-xs font-bold bg-white text-slate-700 outline-none focus:ring-2 focus:ring-brand-500"
+                                                        >
+                                                            {ONBOARDING_MAIL_STATUS_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                                                        </select>
+                                                        <div className="text-xs text-slate-400 mt-2">
+                                                            {onboardingState.status === 'received' ? formatDateTimeLabel(onboardingState.receivedAt) : onboardingState.status === 'sent' ? formatDateTimeLabel(onboardingState.sentAt) : '-'}
+                                                        </div>
                                                     </td>
                                                     <td className="px-5 py-4 min-w-64">
                                                         <div className="space-y-1">
                                                             {onboardingState.history.slice(0, 2).map((item) => (
                                                                 <div key={item.id || item.at} className="text-xs text-slate-500">
-                                                                    <span className="font-bold text-slate-700">발송</span>
+                                                                    <span className="font-bold text-slate-700">{item.type === 'status' ? '상태변경' : item.type === 'received' ? '자료회신' : '발송완료'}</span>
                                                                     <span className="mx-1">·</span>
                                                                     <span>{formatDateTimeLabel(item.at)}</span>
                                                                     {item.note && <span className="ml-1 text-slate-400">({item.note})</span>}
@@ -2332,16 +2399,11 @@
                                                             {onboardingState.history.length === 0 && <div className="text-xs text-slate-400">기록 없음</div>}
                                                         </div>
                                                     </td>
-                                                    <td className="px-5 py-4">
-                                                        <div className="flex justify-end">
-                                                            <button type="button" disabled={!ready} onClick={(e) => { e.stopPropagation(); handleRecordOnboardingSent(record); }} className={`px-3 py-2 rounded-lg text-xs font-bold ${ready ? 'bg-brand-600 text-white hover:bg-brand-700' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}>발송 기록</button>
-                                                        </div>
-                                                    </td>
                                                 </tr>
                                             );
                                         })}
                                         {filteredRecords.length === 0 && (
-                                            <tr><td colSpan="6" className="py-12 text-center text-slate-400">조건에 맞는 최종합격자가 없습니다.</td></tr>
+                                            <tr><td colSpan="5" className="py-12 text-center text-slate-400">조건에 맞는 입사안내메일 대상자가 없습니다.</td></tr>
                                         )}
                                     </tbody>
                                 </table>
