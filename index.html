@@ -483,7 +483,7 @@
                         candidate,
                         jobId: job.id,
                         jobTitle: job.offerOnly ? OFFER_LETTER_MANUAL_JOB_TITLE : (job.title || '-'),
-                        team: job.offerOnly ? '공고 없음' : (job.team || '미지정')
+                        team: job.offerOnly ? (candidate.offerLetter?.manualTeam || candidate.team || '부서 미지정') : (job.team || '미지정')
                     })))
                     .sort((a, b) => {
                         const aOffer = getOfferLetterState(a.candidate);
@@ -500,7 +500,7 @@
                         candidate,
                         jobId: job.id,
                         jobTitle: job.offerOnly ? OFFER_LETTER_MANUAL_JOB_TITLE : (job.title || '-'),
-                        team: job.offerOnly ? '공고 없음' : (job.team || '미지정')
+                        team: job.offerOnly ? (candidate.offerLetter?.manualTeam || candidate.team || '부서 미지정') : (job.team || '미지정')
                     })))
                     .sort((a, b) => {
                         const aOffer = getOfferLetterState(a.candidate);
@@ -1942,6 +1942,7 @@
                 const [statusFilter, setStatusFilter] = useState('all');
                 const [isManualAddOpen, setIsManualAddOpen] = useState(false);
                 const [manualAddQuery, setManualAddQuery] = useState('');
+                const [manualCreateJobId, setManualCreateJobId] = useState('');
                 const manualAddOptions = useMemo(() => {
                     return selectableJobs.flatMap((job) => (job.candidates || [])
                         .filter((candidate) => !isOfferLetterTarget(candidate))
@@ -2021,9 +2022,14 @@
                     const name = String(fd.get('name') || '').trim();
                     const email = String(fd.get('email') || '').trim().toLowerCase();
                     const phone = normalizePhone(fd.get('phone'));
+                    const manualTeam = String(fd.get('manualTeam') || '').trim();
                     const note = String(fd.get('note') || '').trim();
                     if (!name || (!email && !phone)) {
                         alert('이름, 이메일 또는 연락처를 입력해주세요.');
+                        return;
+                    }
+                    if (!jobId && !manualTeam) {
+                        alert('공고 없이 추가할 때는 부서명을 입력해주세요.');
                         return;
                     }
                     const duplicate = liveJobs.find((job) =>
@@ -2043,7 +2049,7 @@
                         await firestoreWrite(OFFER_LETTER_MANUAL_JOB_ID, {
                             id: OFFER_LETTER_MANUAL_JOB_ID,
                             title: OFFER_LETTER_MANUAL_JOB_TITLE,
-                            team: '공고 없음',
+                            team: '공고 미지정',
                             status: '오퍼레터 대상',
                             offerOnly: true,
                             meta: { type: '수동', level: '무관', salary: '', location: '' },
@@ -2060,6 +2066,7 @@
                         phone: String(fd.get('phone') || '').trim(),
                         source: '수동',
                         address: '',
+                        team: jobId ? '' : manualTeam,
                         note,
                         status: '접수',
                         addedAt: now.toLocaleDateString('ko-KR'),
@@ -2070,6 +2077,7 @@
                             status: 'pending',
                             manualTarget: true,
                             manualAddedAt: nowIso,
+                            manualTeam: jobId ? '' : manualTeam,
                             history: [{ id: generateId(), type: 'manual_add', at: nowIso, note: '오퍼레터 신규 대상 수동 추가' }]
                         },
                         activityLog: [{ id: generateId(), at: nowIso, message: '오퍼레터 신규 대상 수동 추가' }]
@@ -2077,6 +2085,7 @@
                     const updatedCandidates = await updateCandidatesAtomic(targetJobId, (currentCandidates) => [...currentCandidates, newCandidate]);
                     if (updatedCandidates) {
                         e.target.reset();
+                        setManualCreateJobId('');
                         setManualAddQuery('');
                         setIsManualAddOpen(false);
                         alert('오퍼레터 신규 대상자를 추가했습니다.');
@@ -2102,7 +2111,7 @@
                             </div>
                             <div className="flex items-center gap-3">
                                 <div className="text-sm text-slate-500">{filteredRecords.length} / {offerLetterCandidateRecords.length}명 표시</div>
-                                <button type="button" onClick={() => setIsManualAddOpen(true)} className="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">
+                                <button type="button" onClick={() => { setManualCreateJobId(''); setIsManualAddOpen(true); }} className="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm">
                                     <Icons.Plus className="w-4 h-4" /> 수동 추가
                                 </button>
                             </div>
@@ -2201,7 +2210,7 @@
                             </div>
                         </div>
 
-                        <Modal isOpen={isManualAddOpen} onClose={() => setIsManualAddOpen(false)} title="오퍼레터 대상 수동 추가" size="lg">
+                        <Modal isOpen={isManualAddOpen} onClose={() => { setIsManualAddOpen(false); setManualCreateJobId(''); }} title="오퍼레터 대상 수동 추가" size="lg">
                             <div className="space-y-4">
                                 <div className="p-4 rounded-lg bg-blue-50 border border-blue-100 text-sm text-blue-800">
                                     지원자 상태는 변경하지 않고 오퍼레터 관리 대상에만 추가합니다. 이미 최종합격자인 지원자는 자동으로 표시되므로 목록에서 제외됩니다.
@@ -2211,7 +2220,12 @@
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         <div>
                                             <label className="block text-xs font-bold text-slate-500 mb-1">공고 (선택)</label>
-                                            <select name="jobId" className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white">
+                                            <select
+                                                name="jobId"
+                                                value={manualCreateJobId}
+                                                onChange={(e) => setManualCreateJobId(e.target.value)}
+                                                className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white"
+                                            >
                                                 <option value="">공고 없이 추가</option>
                                                 {selectableJobs.map((job) => <option key={job.id} value={job.id}>{job.title}</option>)}
                                             </select>
@@ -2219,6 +2233,16 @@
                                         <div>
                                             <label className="block text-xs font-bold text-slate-500 mb-1">이름</label>
                                             <input name="name" required className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">부서명 {manualCreateJobId ? '(선택)' : '(필수)'}</label>
+                                            <input
+                                                name="manualTeam"
+                                                required={!manualCreateJobId}
+                                                disabled={!!manualCreateJobId}
+                                                className={`w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm ${manualCreateJobId ? 'bg-slate-100 text-slate-400' : 'bg-white'}`}
+                                                placeholder={manualCreateJobId ? '선택한 공고의 부서를 사용합니다' : '예: 생산관리팀'}
+                                            />
                                         </div>
                                         <div>
                                             <label className="block text-xs font-bold text-slate-500 mb-1">이메일</label>
