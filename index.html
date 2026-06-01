@@ -194,6 +194,8 @@
             { id: 'sent', label: '발송완료' },
             { id: 'received', label: '자료회신' }
         ];
+        const OFFER_LETTER_MANUAL_JOB_ID = 'offer_letter_manual_targets';
+        const OFFER_LETTER_MANUAL_JOB_TITLE = '공고 미지정';
         const getOptionLabel = (options, id) => options.find((option) => option.id === id)?.label || id || '-';
         const generateId = () => Math.random().toString(36).substr(2, 9);
         const getScheduleRequestStatus = (candidate) => candidate?.scheduleRequest?.status || 'draft';
@@ -471,16 +473,17 @@
             const activeJob = useMemo(() => jobs.find(j => j.id === activeJobId), [jobs, activeJobId]);
             const liveJobs = useMemo(() => jobs.filter(j => !j.deletedAt), [jobs]);
             const trashJobs = useMemo(() => jobs.filter(j => !!j.deletedAt), [jobs]);
-            const activeJobs = useMemo(() => liveJobs.filter(j => j.period?.end && !isExpired(j.period.end)), [liveJobs]);
-            const closedJobs = useMemo(() => liveJobs.filter(j => j.period?.end && isExpired(j.period.end)), [liveJobs]);
+            const activeJobs = useMemo(() => liveJobs.filter(j => !j.offerOnly && j.period?.end && !isExpired(j.period.end)), [liveJobs]);
+            const closedJobs = useMemo(() => liveJobs.filter(j => !j.offerOnly && j.period?.end && isExpired(j.period.end)), [liveJobs]);
+            const selectableJobs = useMemo(() => liveJobs.filter(j => !j.offerOnly), [liveJobs]);
             const hiredCandidateRecords = useMemo(() => {
                 return liveJobs.flatMap((job) => (job.candidates || [])
                     .filter((candidate) => isHiredCandidate(candidate))
                     .map((candidate) => ({
                         candidate,
                         jobId: job.id,
-                        jobTitle: job.title || '-',
-                        team: job.team || '미지정'
+                        jobTitle: job.offerOnly ? OFFER_LETTER_MANUAL_JOB_TITLE : (job.title || '-'),
+                        team: job.offerOnly ? '공고 없음' : (job.team || '미지정')
                     })))
                     .sort((a, b) => {
                         const aOffer = getOfferLetterState(a.candidate);
@@ -496,8 +499,8 @@
                     .map((candidate) => ({
                         candidate,
                         jobId: job.id,
-                        jobTitle: job.title || '-',
-                        team: job.team || '미지정'
+                        jobTitle: job.offerOnly ? OFFER_LETTER_MANUAL_JOB_TITLE : (job.title || '-'),
+                        team: job.offerOnly ? '공고 없음' : (job.team || '미지정')
                     })))
                     .sort((a, b) => {
                         const aOffer = getOfferLetterState(a.candidate);
@@ -1940,7 +1943,7 @@
                 const [isManualAddOpen, setIsManualAddOpen] = useState(false);
                 const [manualAddQuery, setManualAddQuery] = useState('');
                 const manualAddOptions = useMemo(() => {
-                    return liveJobs.flatMap((job) => (job.candidates || [])
+                    return selectableJobs.flatMap((job) => (job.candidates || [])
                         .filter((candidate) => !isOfferLetterTarget(candidate))
                         .map((candidate) => ({
                             candidate,
@@ -1948,7 +1951,7 @@
                             jobTitle: job.title || '-',
                             team: job.team || '미지정'
                         })));
-                }, [liveJobs]);
+                }, [selectableJobs]);
                 const filteredManualAddOptions = useMemo(() => {
                     const q = manualAddQuery.trim().toLowerCase();
                     return manualAddOptions.filter((record) => {
@@ -2013,13 +2016,14 @@
                 const handleManualOfferCreate = async (e) => {
                     e.preventDefault();
                     const fd = new FormData(e.target);
-                    const jobId = fd.get('jobId');
+                    const jobId = String(fd.get('jobId') || '').trim();
+                    const targetJobId = jobId || OFFER_LETTER_MANUAL_JOB_ID;
                     const name = String(fd.get('name') || '').trim();
                     const email = String(fd.get('email') || '').trim().toLowerCase();
                     const phone = normalizePhone(fd.get('phone'));
                     const note = String(fd.get('note') || '').trim();
-                    if (!jobId || !name || (!email && !phone)) {
-                        alert('공고, 이름, 이메일 또는 연락처를 입력해주세요.');
+                    if (!name || (!email && !phone)) {
+                        alert('이름, 이메일 또는 연락처를 입력해주세요.');
                         return;
                     }
                     const duplicate = liveJobs.find((job) =>
@@ -2035,6 +2039,20 @@
                     }
                     const now = new Date();
                     const nowIso = now.toISOString();
+                    if (!jobId && !liveJobs.some((job) => job.id === OFFER_LETTER_MANUAL_JOB_ID)) {
+                        await firestoreWrite(OFFER_LETTER_MANUAL_JOB_ID, {
+                            id: OFFER_LETTER_MANUAL_JOB_ID,
+                            title: OFFER_LETTER_MANUAL_JOB_TITLE,
+                            team: '공고 없음',
+                            status: '오퍼레터 대상',
+                            offerOnly: true,
+                            meta: { type: '수동', level: '무관', salary: '', location: '' },
+                            period: { start: '', end: '' },
+                            skills: [],
+                            description: '공고에 연결되지 않은 오퍼레터 수동 대상 보관함',
+                            candidates: []
+                        });
+                    }
                     const newCandidate = {
                         id: generateId(),
                         name,
@@ -2056,7 +2074,7 @@
                         },
                         activityLog: [{ id: generateId(), at: nowIso, message: '오퍼레터 신규 대상 수동 추가' }]
                     };
-                    const updatedCandidates = await updateCandidatesAtomic(jobId, (currentCandidates) => [...currentCandidates, newCandidate]);
+                    const updatedCandidates = await updateCandidatesAtomic(targetJobId, (currentCandidates) => [...currentCandidates, newCandidate]);
                     if (updatedCandidates) {
                         e.target.reset();
                         setManualAddQuery('');
@@ -2192,10 +2210,10 @@
                                     <div className="font-bold text-slate-800">신규 대상 직접 입력</div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         <div>
-                                            <label className="block text-xs font-bold text-slate-500 mb-1">공고</label>
-                                            <select name="jobId" required className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white">
-                                                <option value="">공고 선택</option>
-                                                {liveJobs.map((job) => <option key={job.id} value={job.id}>{job.title}</option>)}
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">공고 (선택)</label>
+                                            <select name="jobId" className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm bg-white">
+                                                <option value="">공고 없이 추가</option>
+                                                {selectableJobs.map((job) => <option key={job.id} value={job.id}>{job.title}</option>)}
                                             </select>
                                         </div>
                                         <div>
