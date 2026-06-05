@@ -170,6 +170,7 @@
         };
 
         const STAGES = ['접수', '서류검토', '1차면접', '2차면접', '최종합격', '불합격'];
+        const LINEAR_STAGE_FLOW = ['접수', '서류검토', '1차면접', '2차면접', '최종합격'];
         const CANDIDATE_SOURCES = ['사람인', '잡코리아', '추천', '링크드인', '홈페이지', '기타'];
         const DASHBOARD_RANGE_OPTIONS = [
             { id: 'all', label: '전체' },
@@ -200,6 +201,13 @@
         const generateId = () => Math.random().toString(36).substr(2, 9);
         const getScheduleRequestStatus = (candidate) => candidate?.scheduleRequest?.status || 'draft';
         const isInterviewCandidate = (candidate) => String(candidate?.status || '').includes('면접');
+        const getAdjacentPipelineStage = (status, direction) => {
+            const currentIndex = LINEAR_STAGE_FLOW.indexOf(status);
+            if (currentIndex < 0) return '';
+            const nextIndex = currentIndex + direction;
+            if (nextIndex < 0 || nextIndex >= LINEAR_STAGE_FLOW.length) return '';
+            return LINEAR_STAGE_FLOW[nextIndex];
+        };
         const getInterviewOpsState = (candidate) => {
             if (!isInterviewCandidate(candidate)) return 'none';
             if (candidate?.interviewDate) return 'confirmed';
@@ -275,6 +283,33 @@
                 repliedAt,
                 status: explicitStatus || (repliedAt ? 'replied' : sentAt ? 'sent' : 'pending')
             };
+        };
+        const applyCandidatePipelineStatus = (candidate, nextStatus, nowIso = new Date().toISOString()) => {
+            if (!candidate || candidate.status === nextStatus) return candidate;
+            const previousStatus = candidate.status || '미지정';
+            let nextCandidate = { ...candidate, status: nextStatus };
+            let message = `단계 변경: ${previousStatus} → ${nextStatus}`;
+
+            if (nextStatus === '최종합격') {
+                const currentOffer = candidate.offerLetter || {};
+                const historyEntry = {
+                    id: generateId(),
+                    type: 'status',
+                    at: nowIso,
+                    note: '최종합격 전환으로 오퍼레터 대상 자동 등록'
+                };
+                nextCandidate = {
+                    ...nextCandidate,
+                    offerLetter: {
+                        ...currentOffer,
+                        status: currentOffer.status || 'pending',
+                        history: [historyEntry, ...getOpsHistory(candidate, 'offerLetter')].slice(0, 50)
+                    }
+                };
+                message += ' (오퍼레터 대상 자동 등록)';
+            }
+
+            return appendCandidateHistory(nextCandidate, message, nowIso);
         };
         const getOnboardingMailState = (candidate) => {
             const onboardingMail = candidate?.onboardingMail || {};
@@ -890,6 +925,29 @@
                 }
                 return updatedCandidates;
             };
+            const updateCandidatePipelineStatus = async (jobId, candidateId, nextStatus, options = {}) => {
+                if (!jobId || !candidateId || !nextStatus) return null;
+                const nowIso = new Date().toISOString();
+                const updatedCandidates = await updateCandidatesAtomic(jobId, (currentCandidates) =>
+                    currentCandidates.map((candidate) => {
+                        if (candidate.id !== candidateId) return candidate;
+                        return applyCandidatePipelineStatus(candidate, nextStatus, nowIso);
+                    })
+                );
+                if (updatedCandidates) {
+                    const latest = updatedCandidates.find((candidate) => candidate.id === candidateId);
+                    if (latest && selectedCandidate?.id === candidateId) setSelectedCandidate(latest);
+                    if (options.goToOfferLetters) {
+                        setIsCandidateModalOpen(false);
+                        setCurrentMenu('offerLetters');
+                        setViewMode('list');
+                        setActiveJobId(null);
+                    } else if (options.closeModal) {
+                        setIsCandidateModalOpen(false);
+                    }
+                }
+                return updatedCandidates;
+            };
             const handleRecordOfferSent = async (record) => {
                 if (!record?.jobId || !record?.candidate?.id) return;
                 const memo = window.prompt('오퍼레터 안내 메일 발송 메모를 입력하세요. 필요 없으면 비워두세요.', '');
@@ -1449,15 +1507,18 @@
             const moveCandidate = async (candidateId, direction) => {
                 if (!activeJob?.id) return;
                 const nowIso = new Date().toISOString();
-                await updateCandidatesAtomic(activeJob.id, (currentCandidates) =>
+                const updatedCandidates = await updateCandidatesAtomic(activeJob.id, (currentCandidates) =>
                     currentCandidates.map(c => {
                         if (c.id !== candidateId) return c;
-                        const nextIndex = STAGES.indexOf(c.status) + direction;
-                        if (nextIndex < 0 || nextIndex >= STAGES.length) return c;
-                        const nextStatus = STAGES[nextIndex];
-                        return appendCandidateHistory({ ...c, status: nextStatus }, `단계 변경: ${c.status} → ${nextStatus}`, nowIso);
+                        const nextStatus = getAdjacentPipelineStage(c.status, direction);
+                        if (!nextStatus) return c;
+                        return applyCandidatePipelineStatus(c, nextStatus, nowIso);
                     })
                 );
+                if (updatedCandidates && selectedCandidate?.id === candidateId) {
+                    const latest = updatedCandidates.find(c => c.id === candidateId);
+                    if (latest) setSelectedCandidate(latest);
+                }
             };
 
             const CalendarView = () => {
@@ -2831,6 +2892,8 @@
                                                             const interviewState = getInterviewOpsState(c);
                                                             const requestLabel = interviewState === 'requestNeeded' ? '사람인 요청 전' : interviewState === 'requested' ? '요청 완료' : interviewState === 'confirmed' ? '일정 확정' : '';
                                                             const requestColor = interviewState === 'requestNeeded' ? 'bg-orange-50 text-orange-700' : interviewState === 'requested' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700';
+                                                            const previousStage = getAdjacentPipelineStage(c.status, -1);
+                                                            const nextStage = getAdjacentPipelineStage(c.status, 1);
                                                             return (
                                                                 <div key={c.id} onClick={() => { setSelectedCandidate(c); setIsCandidateModalOpen(true); }} className="bg-white p-3 rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-brand-300 cursor-pointer transition-all group relative">
                                                                     {!isReadOnly && (
@@ -2848,7 +2911,7 @@
                                                                     {c.interviewDate && <div className="mb-2 inline-flex items-center bg-orange-50 text-orange-700 px-2 py-1 rounded text-xs font-bold"><Icons.Calendar className="w-3 h-3 mr-1"/>{new Date(c.interviewDate).toLocaleString('ko-KR', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'})}</div>}
                                                                     {!c.interviewDate && (c.status.includes('면접')) && <div className="mb-2 inline-flex items-center text-gray-400 text-xs"><Icons.Calendar className="w-3 h-3 mr-1"/>일정 미정</div>}
                                                                     
-                                                                    {!isReadOnly && (<div className="flex justify-between mt-2 pt-2 border-t border-gray-50 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"><button onClick={(e) => { e.stopPropagation(); moveCandidate(c.id, -1); }} disabled={stage === STAGES[0]} className="text-xs text-gray-400 hover:text-brand-600 disabled:opacity-30">◀ 이전</button><button onClick={(e) => { e.stopPropagation(); moveCandidate(c.id, 1); }} disabled={stage === STAGES[STAGES.length-1]} className="text-xs text-gray-400 hover:text-brand-600 disabled:opacity-30">다음 ▶</button></div>)}
+                                                                    {!isReadOnly && (<div className="flex justify-between mt-2 pt-2 border-t border-gray-50 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"><button onClick={(e) => { e.stopPropagation(); moveCandidate(c.id, -1); }} disabled={!previousStage} className="text-xs text-gray-400 hover:text-brand-600 disabled:opacity-30">◀ 이전</button><button onClick={(e) => { e.stopPropagation(); moveCandidate(c.id, 1); }} disabled={!nextStage} className="text-xs text-gray-400 hover:text-brand-600 disabled:opacity-30">다음 ▶</button></div>)}
                                                                 </div>
                                                             );
                                                         })}
@@ -3118,6 +3181,42 @@
                                                 onChange={(e) => handleUpdateCandidateInterview(e.target.value)} />
                                             <p className="text-xs text-gray-500 mt-2">사람인에서 지원자 응답을 확인한 뒤 최종 면접 시간을 입력하면 캘린더에 반영됩니다.</p>
                                         </div>
+
+                                        {activeJob && !isExpired(activeJob.period.end) && (
+                                            <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-4">
+                                                <div className="flex items-start justify-between gap-3 mb-3">
+                                                    <div>
+                                                        <h4 className="font-bold text-emerald-800 flex items-center gap-2"><Icons.CheckCircle className="w-4 h-4" /> 면접 결과 처리</h4>
+                                                        <p className="text-xs text-emerald-700 mt-1">면접 결과에 따라 다음 면접, 최종합격 오퍼레터, 불합격 중 하나로 바로 처리합니다.</p>
+                                                    </div>
+                                                </div>
+                                                <div className={`grid grid-cols-1 ${selectedCandidate.status === '1차면접' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-2`}>
+                                                    {selectedCandidate.status === '1차면접' && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => updateCandidatePipelineStatus(activeJob.id, selectedCandidate.id, '2차면접')}
+                                                            className="px-3 py-2 rounded-lg text-sm font-bold bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-100"
+                                                        >
+                                                            1차 합격 · 2차면접
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => updateCandidatePipelineStatus(activeJob.id, selectedCandidate.id, '최종합격', { goToOfferLetters: true })}
+                                                        className="px-3 py-2 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700"
+                                                    >
+                                                        최종합격 · 오퍼레터
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => updateCandidatePipelineStatus(activeJob.id, selectedCandidate.id, '불합격', { closeModal: true })}
+                                                        className="px-3 py-2 rounded-lg text-sm font-bold bg-white border border-red-200 text-red-600 hover:bg-red-50"
+                                                    >
+                                                        불합격 처리
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 
@@ -3126,19 +3225,7 @@
                                     <div className="grid grid-cols-3 gap-2 pt-4 border-t">
                                         {STAGES.map(s => <button key={s} onClick={async () => {
                                             if (!activeJob?.id || !selectedCandidate?.id) return;
-                                            const nowIso = new Date().toISOString();
-                                            const updatedCandidates = await updateCandidatesAtomic(activeJob.id, (currentCandidates) =>
-                                                currentCandidates.map(c => {
-                                                    if (c.id !== selectedCandidate.id) return c;
-                                                    if (c.status === s) return c;
-                                                    return appendCandidateHistory({ ...c, status: s }, `단계 변경: ${c.status} → ${s}`, nowIso);
-                                                })
-                                            );
-                                            if (updatedCandidates) {
-                                                const latest = updatedCandidates.find(c => c.id === selectedCandidate.id);
-                                                if (latest) setSelectedCandidate(latest);
-                                            }
-                                            setIsCandidateModalOpen(false);
+                                            await updateCandidatePipelineStatus(activeJob.id, selectedCandidate.id, s, { closeModal: true });
                                         }} className={`border py-2 rounded text-xs hover:bg-gray-50 ${selectedCandidate.status === s ? 'bg-slate-800 text-white' : ''}`}>{s}</button>)}
                                     </div>
                                 )}
