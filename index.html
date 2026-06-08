@@ -172,6 +172,51 @@
         const STAGES = ['접수', '서류검토', '1차면접', '2차면접', '최종합격', '불합격'];
         const LINEAR_STAGE_FLOW = ['접수', '서류검토', '1차면접', '2차면접', '최종합격'];
         const CANDIDATE_SOURCES = ['사람인', '잡코리아', '추천', '링크드인', '홈페이지', '기타'];
+        const CANDIDATE_STATUS_META = {
+            '접수': {
+                badge: 'bg-sky-50 text-sky-700 border-sky-100',
+                dot: 'bg-sky-500',
+                iconBox: 'bg-sky-50 text-sky-600 border-sky-100',
+                icon: Icons.Plus
+            },
+            '서류검토': {
+                badge: 'bg-violet-50 text-violet-700 border-violet-100',
+                dot: 'bg-violet-500',
+                iconBox: 'bg-violet-50 text-violet-600 border-violet-100',
+                icon: Icons.FileText
+            },
+            '1차면접': {
+                badge: 'bg-orange-50 text-orange-700 border-orange-100',
+                dot: 'bg-orange-500',
+                iconBox: 'bg-orange-50 text-orange-600 border-orange-100',
+                icon: Icons.Calendar
+            },
+            '2차면접': {
+                badge: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-100',
+                dot: 'bg-fuchsia-500',
+                iconBox: 'bg-fuchsia-50 text-fuchsia-600 border-fuchsia-100',
+                icon: Icons.Users
+            },
+            '최종합격': {
+                badge: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+                dot: 'bg-emerald-500',
+                iconBox: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+                icon: Icons.CheckCircle
+            },
+            '불합격': {
+                badge: 'bg-red-50 text-red-700 border-red-100',
+                dot: 'bg-red-500',
+                iconBox: 'bg-red-50 text-red-600 border-red-100',
+                icon: Icons.StopCircle
+            }
+        };
+        const INTERVIEW_LOCATION_OPTIONS = [
+            { id: 'hq', label: '본사 방문 면접', message: '엔코스 본사 방문 면접' },
+            { id: 'saramin-video', label: '사람인 화상면접', message: '사람인 화상면접' },
+            { id: 'online', label: '화상 면접', message: '화상 면접 링크 별도 안내' },
+            { id: 'phone', label: '전화 면접', message: '전화 면접' },
+            { id: 'separate', label: '별도 안내', message: '별도 안내' }
+        ];
         const DASHBOARD_RANGE_OPTIONS = [
             { id: 'all', label: '전체' },
             { id: '7', label: '최근 7일' },
@@ -270,6 +315,12 @@
             if (!total) return '0.0%';
             return `${((value / total) * 100).toFixed(digits)}%`;
         };
+        const getCandidateStatusMeta = (status) => CANDIDATE_STATUS_META[status] || {
+            badge: 'bg-slate-50 text-slate-600 border-slate-200',
+            dot: 'bg-slate-400',
+            iconBox: 'bg-slate-50 text-slate-500 border-slate-200',
+            icon: Icons.Activity
+        };
         const isFinalCandidate = (candidate) => ['최종합격', '불합격'].includes(candidate?.status);
         const isHiredCandidate = (candidate) => candidate?.status === '최종합격';
         const isOfferLetterTarget = (candidate) => isHiredCandidate(candidate) || !!candidate?.offerLetter?.manualTarget;
@@ -358,15 +409,31 @@
             const history = Array.isArray(candidate?.smsHistory) ? candidate.smsHistory : [];
             return history.find((item) => !kind || item.kind === kind) || null;
         };
+        const getInterviewLocationOption = (candidate) => {
+            const id = candidate?.interviewLocationType || candidate?.interviewMethod || 'separate';
+            return INTERVIEW_LOCATION_OPTIONS.find((option) => option.id === id) || INTERVIEW_LOCATION_OPTIONS[INTERVIEW_LOCATION_OPTIONS.length - 1];
+        };
+        const getInterviewLocationLabel = (candidate) => getInterviewLocationOption(candidate)?.label || '별도 안내';
+        const getInterviewLocationMessage = (candidate) => getInterviewLocationOption(candidate)?.message || '별도 안내';
         const buildRecruitSmsText = (kind, candidate, jobTitle) => {
             const name = candidate?.name || '지원자';
             const title = jobTitle || '지원 포지션';
             if (kind === 'interview') {
                 return [
-                    `[엔코스] ${name}님, ${title} 면접 일정 안내드립니다.`,
-                    `일시: ${formatDateTimeLabel(candidate?.interviewDate)}`,
-                    '장소/방식: 별도 안내',
-                    '문의: 010-5442-4404'
+                    '[엔코스 면접 안내]',
+                    '',
+                    '안녕하세요.',
+                    '(주)엔코스 채용담당자입니다.',
+                    '',
+                    `면접 일시: ${formatDateTimeLabel(candidate?.interviewDate)}`,
+                    '면접 장소: (주)엔코스 본사',
+                    '회사 주소: 경기도 오산시 가장산업서로 56-24',
+                    '',
+                    '차량 이용 시 주차장 주소는 가장산업서북로 39-18(아이엠텍) 건물 뒤편 공터입니다.',
+                    '도착 후 엔코스 건물 입구에서 경영지원팀으로 벨을 눌러주시면 안내드리겠습니다.',
+                    '',
+                    '일정 변경 등 문의: 채용담당자 070-4135-2568',
+                    '감사합니다.'
                 ].join('\n');
             }
             return [
@@ -433,6 +500,16 @@
             );
         };
         const Badge = ({ children, colorClass }) => (<span className={`px-2 py-0.5 rounded text-xs font-semibold border ${colorClass}`}>{children}</span>);
+        const CandidateStatusBadge = ({ status }) => {
+            const meta = getCandidateStatusMeta(status);
+            const StatusIcon = meta.icon;
+            return (
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold border ${meta.badge}`}>
+                    <StatusIcon className="w-3 h-3" />
+                    {status || '-'}
+                </span>
+            );
+        };
         class ErrorBoundary extends React.Component {
             constructor(props) {
                 super(props);
@@ -628,6 +705,39 @@
                     .filter(({ candidate }) => !!getExpectedStartDate(candidate))
                     .sort((a, b) => getExpectedStartDate(a.candidate).localeCompare(getExpectedStartDate(b.candidate)));
             }, [offerLetterCandidateRecords]);
+            const recruitSmsTargetRecords = useMemo(() => {
+                return liveJobs.flatMap((job) => (job.candidates || [])
+                    .filter((candidate) => isInterviewCandidate(candidate) || isOfferLetterTarget(candidate))
+                    .map((candidate) => ({
+                        candidate,
+                        jobId: job.id,
+                        jobTitle: job.offerOnly ? OFFER_LETTER_MANUAL_JOB_TITLE : (job.title || '-'),
+                        team: getCandidateTeamLabel(candidate, job)
+                    })))
+                    .sort((a, b) => {
+                        const aTime = new Date(a.candidate.interviewDate || recruitSmsLatest(a.candidate)?.at || a.candidate.addedAtIso || 0).getTime() || 0;
+                        const bTime = new Date(b.candidate.interviewDate || recruitSmsLatest(b.candidate)?.at || b.candidate.addedAtIso || 0).getTime() || 0;
+                        return bTime - aTime;
+                    });
+            }, [liveJobs]);
+            const recruitSmsHistoryEntries = useMemo(() => {
+                return liveJobs.flatMap((job) => (job.candidates || []).flatMap((candidate) =>
+                    ((candidate.smsHistory || []).filter(Boolean)).map((entry) => ({
+                        ...entry,
+                        candidate,
+                        jobId: job.id,
+                        jobTitle: job.offerOnly ? OFFER_LETTER_MANUAL_JOB_TITLE : (job.title || '-'),
+                        team: getCandidateTeamLabel(candidate, job)
+                    }))
+                )).sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
+            }, [liveJobs]);
+            const recruitSmsPendingCount = useMemo(() => {
+                return recruitSmsTargetRecords.filter(({ candidate }) => {
+                    const interviewPending = isInterviewCandidate(candidate) && candidate.interviewDate && recruitSmsLatest(candidate, 'interview')?.status !== 'success';
+                    const hiredPending = isOfferLetterTarget(candidate) && recruitSmsLatest(candidate, 'hired')?.status !== 'success';
+                    return !!normalizePhone(candidate.phone) && (interviewPending || hiredPending);
+                }).length;
+            }, [recruitSmsTargetRecords]);
             const postHireStats = useMemo(() => {
                 const total = hiredCandidateRecords.length;
                 const offerTotal = offerLetterCandidateRecords.length;
@@ -751,7 +861,8 @@
                     addedAt: now.toLocaleDateString('ko-KR'),
                     addedAtIso: now.toISOString(),
                     addedAtTs: now.getTime(),
-                    interviewDate: null
+                    interviewDate: null,
+                    interviewLocationType: 'separate'
                 };
                 
                 if (!activeJob?.id) return;
@@ -895,7 +1006,8 @@
                             addedAt: now.toLocaleDateString('ko-KR'),
                             addedAtIso: now.toISOString(),
                             addedAtTs: now.getTime(),
-                            interviewDate: null
+                            interviewDate: null,
+                            interviewLocationType: 'separate'
                         });
                     });
                     if (!validCandidates.length) {
@@ -926,28 +1038,44 @@
                 }
             };
 
-            const handleUpdateCandidateInterview = async (date) => {
-                if (!activeJob?.id || !selectedCandidate?.id) return;
+            const handleUpdateCandidateInterviewDetails = async (record, changes = {}) => {
+                if (!record?.jobId || !record?.candidate?.id) return;
                 const nowIso = new Date().toISOString();
-                const updatedCandidates = await updateCandidatesAtomic(activeJob.id, (currentCandidates) =>
-                    currentCandidates.map(c => {
-                        if (c.id !== selectedCandidate.id) return c;
-                        const nextCandidate = {
-                            ...c,
-                            interviewDate: date || null,
-                            scheduleRequest: {
-                                ...(c.scheduleRequest || {}),
-                                status: date ? 'confirmed' : (c.scheduleRequest?.status || 'draft'),
-                                confirmedAt: date ? nowIso : ''
-                            }
-                        };
-                        return appendCandidateHistory(nextCandidate, date ? `면접 일정 확정: ${formatDateTimeLabel(date)}` : '면접 일정 삭제', nowIso);
-                    })
-                );
-                if (updatedCandidates) {
-                    const latest = updatedCandidates.find(c => c.id === selectedCandidate.id);
-                    if (latest) setSelectedCandidate(latest);
-                }
+                const hasDate = Object.prototype.hasOwnProperty.call(changes, 'interviewDate');
+                const hasLocation = Object.prototype.hasOwnProperty.call(changes, 'interviewLocationType');
+                await updatePostHireCandidateRecord(record.jobId, record.candidate.id, (c) => {
+                    const previousDate = c.interviewDate || null;
+                    const previousLocation = getInterviewLocationLabel(c);
+                    const nextDate = hasDate ? (changes.interviewDate || null) : previousDate;
+                    const nextLocationType = hasLocation ? (changes.interviewLocationType || 'separate') : (c.interviewLocationType || c.interviewMethod || 'separate');
+                    const nextLocation = getInterviewLocationLabel({ ...c, interviewLocationType: nextLocationType });
+                    const dateChanged = previousDate !== nextDate;
+                    const locationChanged = previousLocation !== nextLocation;
+                    const nextScheduleRequest = {
+                        ...(c.scheduleRequest || {}),
+                        status: nextDate ? 'confirmed' : (c.scheduleRequest?.sentAt ? 'sent' : 'draft'),
+                        confirmedAt: nextDate ? (dateChanged ? nowIso : (c.scheduleRequest?.confirmedAt || nowIso)) : ''
+                    };
+                    const messages = [];
+                    if (dateChanged) messages.push(nextDate ? `면접 일정 확정: ${formatDateTimeLabel(nextDate)}` : '면접 일정 삭제');
+                    if (locationChanged) messages.push(`면접 장소/방식 변경: ${previousLocation} → ${nextLocation}`);
+                    if (!messages.length) return c;
+                    const nextCandidate = {
+                        ...c,
+                        interviewDate: nextDate,
+                        interviewLocationType: nextLocationType,
+                        scheduleRequest: nextScheduleRequest
+                    };
+                    return appendCandidateHistory(nextCandidate, messages.join(' / '), nowIso);
+                });
+            };
+            const handleUpdateCandidateInterview = async (date) => {
+                if (!selectedCandidateRecord) return;
+                await handleUpdateCandidateInterviewDetails(selectedCandidateRecord, { interviewDate: date || null });
+            };
+            const handleUpdateCandidateInterviewLocation = async (locationType) => {
+                if (!selectedCandidateRecord) return;
+                await handleUpdateCandidateInterviewDetails(selectedCandidateRecord, { interviewLocationType: locationType || 'separate' });
             };
             const handleMarkSaraminRequestSent = async () => {
                 if (!activeJob?.id || !selectedCandidate?.id) return;
@@ -1768,7 +1896,7 @@
                                                         <button key={idx} onClick={() => handleCandidateClick(ev)} title={`${eventTime} ${ev.name} - ${ev.jobTitle}`} className="calendar-event-card w-full text-left bg-white border border-brand-100 rounded px-1.5 py-0.5 text-xs shadow-sm hover:shadow-md hover:border-brand-300 transition-all flex flex-col justify-center group">
                                                             <div className="flex justify-between items-center gap-1 min-w-0 leading-4">
                                                                 <span className="font-bold text-brand-700 shrink-0">{eventTime}</span>
-                                                                <span className={`text-[10px] px-1 rounded shrink-0 ${ev.status === '1차면접' ? 'bg-orange-100 text-orange-700' : 'bg-purple-100 text-purple-700'}`}>{ev.status}</span>
+                                                                <span className={`text-[10px] px-1 rounded shrink-0 border ${getCandidateStatusMeta(ev.status).badge}`}>{ev.status}</span>
                                                             </div>
                                                             <div className="flex items-center gap-1 min-w-0 leading-4">
                                                                 <span className="truncate text-gray-700 font-medium">{ev.name}</span>
@@ -2207,7 +2335,7 @@
                             <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.Zap className="w-5 h-5 text-gray-400" /> 가장 많이 요구되는 기술 스택 (TOP 5)</h3>
                                 <div className="space-y-4">{skillCounts.map(([skill, count], i) => (<div key={i} className="flex items-center gap-4"><div className="w-24 text-sm font-medium text-gray-600 truncate">{skill}</div><div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full" style={{ width: `${(count / (skillCounts[0][1] || 1)) * 100}%` }}></div></div><div className="w-8 text-right text-xs font-bold text-indigo-600">{count}건</div></div>))}{skillCounts.length === 0 && <div className="text-center text-gray-400 text-sm py-4">데이터가 충분하지 않습니다.</div>}</div></div>
                             <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Icons.Clock className="w-5 h-5 text-gray-400" /> 실시간 지원 현황 (최근 5건)</h3>
-                                <div className="space-y-0 divide-y divide-gray-50">{recentActivities.map((record, i) => { const log = record.candidate; return (<div key={`${record.jobId}-${log.id || i}`} className="py-4 flex items-center justify-between first:pt-0 last:pb-0"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold bg-gray-100 text-gray-600">{(log.name || '?')[0]}</div><div><div className="text-sm font-bold text-gray-800">{log.name}</div><div className="text-xs text-gray-500 truncate w-40">{record.jobTitle}</div></div></div><div className="text-right"><Badge colorClass="bg-blue-50 text-blue-600 border-blue-100">{log.status}</Badge><div className="text-xs text-gray-400 mt-1">{formatCandidateAddedAt(log)}</div></div></div>); })}{recentActivities.length === 0 && <div className="text-center text-gray-400 text-sm py-4">최근 활동 내역이 없습니다.</div>}</div></div>
+                                <div className="space-y-0 divide-y divide-gray-50">{recentActivities.map((record, i) => { const log = record.candidate; const statusMeta = getCandidateStatusMeta(log.status); const StatusIcon = statusMeta.icon; return (<div key={`${record.jobId}-${log.id || i}`} className="py-4 flex items-center justify-between first:pt-0 last:pb-0"><div className="flex items-center gap-3"><div className={`w-8 h-8 rounded-full flex items-center justify-center border ${statusMeta.iconBox}`}><StatusIcon className="w-4 h-4" /></div><div><div className="text-sm font-bold text-gray-800">{log.name}</div><div className="text-xs text-gray-500 truncate w-40">{record.jobTitle}</div></div></div><div className="text-right"><CandidateStatusBadge status={log.status} /><div className="text-xs text-gray-400 mt-1">{formatCandidateAddedAt(log)}</div></div></div>); })}{recentActivities.length === 0 && <div className="text-center text-gray-400 text-sm py-4">최근 활동 내역이 없습니다.</div>}</div></div>
                         </div>
                     </div>
                 );
@@ -2316,13 +2444,274 @@
                                                     <td className="px-5 py-4 text-slate-700 min-w-48">{record.jobTitle}</td>
                                                     <td className="px-5 py-4 text-slate-500">{record.team}</td>
                                                     <td className="px-5 py-4"><span className="px-2 py-1 rounded bg-slate-100 text-slate-600 text-xs font-bold">{record.source}</span></td>
-                                                    <td className="px-5 py-4"><Badge colorClass="bg-blue-50 text-blue-600 border-blue-100">{candidate.status}</Badge></td>
+                                                    <td className="px-5 py-4"><CandidateStatusBadge status={candidate.status} /></td>
                                                     <td className="px-5 py-4 text-slate-500">{formatCandidateAddedAt(candidate)}</td>
                                                 </tr>
                                             );
                                         })}
                                         {filteredRecords.length === 0 && (
                                             <tr><td colSpan="6" className="py-12 text-center text-slate-400">조건에 맞는 지원자가 없습니다.</td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const SmsCenterView = () => {
+                const [query, setQuery] = useState('');
+                const [targetFilter, setTargetFilter] = useState('ready');
+                const searchText = query.trim().toLowerCase();
+                const matchesSearch = (record) => {
+                    const candidate = record.candidate || {};
+                    const haystack = [
+                        candidate.name,
+                        candidate.email,
+                        candidate.phone,
+                        candidate.status,
+                        record.jobTitle,
+                        record.team,
+                        candidate.note
+                    ].join(' ').toLowerCase();
+                    return !searchText || haystack.includes(searchText);
+                };
+                const isInterviewReady = (candidate) => isInterviewCandidate(candidate) && !!candidate.interviewDate && !!normalizePhone(candidate.phone);
+                const isHiredReady = (candidate) => isOfferLetterTarget(candidate) && !!normalizePhone(candidate.phone);
+                const filteredTargets = useMemo(() => {
+                    return recruitSmsTargetRecords.filter((record) => {
+                        const candidate = record.candidate;
+                        const missingInfo = !normalizePhone(candidate.phone) || (isInterviewCandidate(candidate) && !candidate.interviewDate);
+                        const matchesTarget =
+                            targetFilter === 'all' ||
+                            (targetFilter === 'ready' && (isInterviewReady(candidate) || isHiredReady(candidate))) ||
+                            (targetFilter === 'interview' && isInterviewCandidate(candidate)) ||
+                            (targetFilter === 'hired' && isOfferLetterTarget(candidate)) ||
+                            (targetFilter === 'missing' && missingInfo);
+                        return matchesTarget && matchesSearch(record);
+                    });
+                }, [recruitSmsTargetRecords, targetFilter, searchText]);
+                const filteredHistory = useMemo(() => {
+                    return recruitSmsHistoryEntries.filter(matchesSearch).slice(0, 80);
+                }, [recruitSmsHistoryEntries, searchText]);
+                const stats = [
+                    { label: '발송 가능', value: recruitSmsPendingCount, tone: 'text-brand-600' },
+                    { label: '면접 대상', value: recruitSmsTargetRecords.filter(({ candidate }) => isInterviewCandidate(candidate)).length, tone: 'text-orange-600' },
+                    { label: '합격 대상', value: recruitSmsTargetRecords.filter(({ candidate }) => isOfferLetterTarget(candidate)).length, tone: 'text-emerald-600' },
+                    { label: '발송 이력', value: recruitSmsHistoryEntries.length, tone: 'text-slate-900' }
+                ];
+                const filterOptions = [
+                    { id: 'ready', label: '발송 가능' },
+                    { id: 'all', label: '전체 대상' },
+                    { id: 'interview', label: '면접 대상' },
+                    { id: 'hired', label: '합격 대상' },
+                    { id: 'missing', label: '정보 부족' }
+                ];
+                const openCandidate = (record) => {
+                    setActiveJobId(record.jobId);
+                    setSelectedCandidate(record.candidate);
+                    setIsCandidateModalOpen(true);
+                };
+
+                return (
+                    <div className="p-8 animate-fade-in-up h-full overflow-y-auto pb-20 custom-scrollbar">
+                        <div className="flex flex-wrap items-end justify-between gap-4 mb-8">
+                            <div>
+                                <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Icons.Phone className="w-6 h-6 text-brand-600" /> 문자보내기</h2>
+                                <p className="text-gray-500 mt-1">면접예정자와 합격자 문자 발송, 면접 장소/방식, 발송 이력을 한 화면에서 관리합니다.</p>
+                            </div>
+                            <button type="button" onClick={configureRecruitSmsWorker} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2">
+                                <Icons.Cloud className="w-4 h-4" /> Worker 설정
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                            {stats.map((stat) => (
+                                <div key={stat.label} className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm">
+                                    <div className={`text-2xl font-bold ${stat.tone}`}>{stat.value}<span className="text-sm text-slate-400 ml-1">건</span></div>
+                                    <div className="text-sm text-slate-500 mt-1">{stat.label}</div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="bg-white border border-slate-200 rounded-xl p-4 mb-6 flex flex-col xl:flex-row gap-3">
+                            <div className="relative flex-1">
+                                <Icons.Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                <input value={query} onChange={(e) => setQuery(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-brand-500" placeholder="이름, 연락처, 이메일, 공고명 검색" />
+                            </div>
+                            <div className="bg-slate-100 p-1 rounded-lg flex flex-wrap text-sm">
+                                {filterOptions.map((option) => (
+                                    <button
+                                        key={option.id}
+                                        type="button"
+                                        onClick={() => setTargetFilter(option.id)}
+                                        className={`px-3 py-1.5 rounded-md ${targetFilter === option.id ? 'bg-white shadow text-brand-600' : 'text-slate-500 hover:text-slate-800'}`}
+                                    >
+                                        {option.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden mb-8">
+                            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                                <h3 className="font-bold text-slate-800">발송 대상</h3>
+                                <div className="text-sm text-slate-500">{filteredTargets.length} / {recruitSmsTargetRecords.length}명 표시</div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-slate-50 text-left text-xs text-slate-500">
+                                        <tr>
+                                            <th className="px-5 py-3 font-semibold">대상자</th>
+                                            <th className="px-5 py-3 font-semibold">구분</th>
+                                            <th className="px-5 py-3 font-semibold">면접 일시</th>
+                                            <th className="px-5 py-3 font-semibold">장소/방식</th>
+                                            <th className="px-5 py-3 font-semibold">최근 문자</th>
+                                            <th className="px-5 py-3 font-semibold">발송</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {filteredTargets.map((record) => {
+                                            const candidate = record.candidate;
+                                            const phone = normalizePhone(candidate.phone);
+                                            const latest = recruitSmsLatest(candidate);
+                                            const interviewKey = `${record.jobId}:${candidate.id}:interview`;
+                                            const hiredKey = `${record.jobId}:${candidate.id}:hired`;
+                                            return (
+                                                <tr key={`${record.jobId}-${candidate.id}`} onClick={() => openCandidate(record)} className="hover:bg-brand-50/40 cursor-pointer">
+                                                    <td className="px-5 py-4 min-w-52">
+                                                        <div className="font-bold text-slate-800">{candidate.name}</div>
+                                                        <div className="text-xs text-slate-400 mt-1">{candidate.email || candidate.phone || '-'}</div>
+                                                        <div className="text-xs text-slate-400 mt-1">{record.jobTitle}</div>
+                                                    </td>
+                                                    <td className="px-5 py-4 min-w-36">
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {isInterviewCandidate(candidate) && <Badge colorClass="bg-orange-50 text-orange-600 border-orange-100">면접</Badge>}
+                                                            {isOfferLetterTarget(candidate) && <Badge colorClass="bg-emerald-50 text-emerald-600 border-emerald-100">합격</Badge>}
+                                                        </div>
+                                                        {!phone && <div className="text-xs text-red-500 mt-2">연락처 없음</div>}
+                                                    </td>
+                                                    <td className="px-5 py-4 min-w-48">
+                                                        {isInterviewCandidate(candidate) ? (
+                                                            <input
+                                                                type="datetime-local"
+                                                                value={candidate.interviewDate || ''}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                onChange={(e) => handleUpdateCandidateInterviewDetails(record, { interviewDate: e.target.value || null })}
+                                                                className="w-full border border-slate-200 rounded-lg px-2 py-2 text-xs font-bold bg-white text-slate-700 outline-none focus:ring-2 focus:ring-brand-500"
+                                                            />
+                                                        ) : (
+                                                            <span className="text-slate-400">-</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-5 py-4 min-w-48">
+                                                        {isInterviewCandidate(candidate) ? (
+                                                            <select
+                                                                value={candidate.interviewLocationType || candidate.interviewMethod || 'separate'}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                onChange={(e) => handleUpdateCandidateInterviewDetails(record, { interviewLocationType: e.target.value })}
+                                                                className="w-full border border-slate-200 rounded-lg px-2 py-2 text-xs font-bold bg-white text-slate-700 outline-none focus:ring-2 focus:ring-brand-500"
+                                                            >
+                                                                {INTERVIEW_LOCATION_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                                                            </select>
+                                                        ) : (
+                                                            <span className="text-slate-400">-</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-5 py-4 min-w-44">
+                                                        {latest ? (
+                                                            <div>
+                                                                <div className={`text-xs font-bold ${latest.status === 'success' ? 'text-emerald-600' : 'text-red-500'}`}>{latest.kindLabel} {latest.status === 'success' ? '성공' : '실패'}</div>
+                                                                <div className="text-xs text-slate-400 mt-1">{formatDateTimeLabel(latest.at)}</div>
+                                                            </div>
+                                                        ) : (
+                                                            <span className="text-xs text-slate-400">발송 이력 없음</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-5 py-4 min-w-56">
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {isInterviewCandidate(candidate) && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleSendRecruitSms(record, 'interview');
+                                                                    }}
+                                                                    disabled={!phone || !candidate.interviewDate || smsSendingKey === interviewKey}
+                                                                    className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                >
+                                                                    면접 문자
+                                                                </button>
+                                                            )}
+                                                            {isOfferLetterTarget(candidate) && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleSendRecruitSms(record, 'hired');
+                                                                    }}
+                                                                    disabled={!phone || smsSendingKey === hiredKey}
+                                                                    className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                >
+                                                                    합격 문자
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                        {isInterviewCandidate(candidate) && !candidate.interviewDate && <div className="text-[11px] text-orange-500 mt-2">면접 일시 입력 필요</div>}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                        {filteredTargets.length === 0 && (
+                                            <tr><td colSpan="6" className="py-12 text-center text-slate-400">조건에 맞는 문자 발송 대상자가 없습니다.</td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+                            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                                <h3 className="font-bold text-slate-800">발송 이력</h3>
+                                <div className="text-sm text-slate-500">최근 {filteredHistory.length}건</div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-slate-50 text-left text-xs text-slate-500">
+                                        <tr>
+                                            <th className="px-5 py-3 font-semibold">발송일시</th>
+                                            <th className="px-5 py-3 font-semibold">대상자</th>
+                                            <th className="px-5 py-3 font-semibold">구분</th>
+                                            <th className="px-5 py-3 font-semibold">결과</th>
+                                            <th className="px-5 py-3 font-semibold">내용</th>
+                                            <th className="px-5 py-3 font-semibold">응답</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {filteredHistory.map((entry) => (
+                                            <tr key={`${entry.jobId}-${entry.candidate.id}-${entry.id}`} onClick={() => openCandidate(entry)} className="hover:bg-slate-50 cursor-pointer">
+                                                <td className="px-5 py-4 min-w-40 text-slate-600">{formatDateTimeLabel(entry.at)}</td>
+                                                <td className="px-5 py-4 min-w-44">
+                                                    <div className="font-bold text-slate-800">{entry.candidate.name}</div>
+                                                    <div className="text-xs text-slate-400 mt-1">{entry.phone || entry.candidate.phone || '-'}</div>
+                                                </td>
+                                                <td className="px-5 py-4 min-w-32">{entry.kindLabel || getOptionLabel(Object.entries(RECRUIT_SMS_KIND_LABELS).map(([id, label]) => ({ id, label })), entry.kind)}</td>
+                                                <td className="px-5 py-4 min-w-28">
+                                                    <Badge colorClass={entry.status === 'success' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-red-50 text-red-600 border-red-100'}>
+                                                        {entry.status === 'success' ? '성공' : '실패'}
+                                                    </Badge>
+                                                </td>
+                                                <td className="px-5 py-4 min-w-80 max-w-xl">
+                                                    <div className="text-xs text-slate-600 whitespace-pre-line max-h-16 overflow-hidden">{entry.message || '-'}</div>
+                                                </td>
+                                                <td className="px-5 py-4 min-w-52 text-xs text-slate-500">
+                                                    {entry.msgGroupId || entry.errorMessage || entry.resultCode || '-'}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        {filteredHistory.length === 0 && (
+                                            <tr><td colSpan="6" className="py-12 text-center text-slate-400">발송 이력이 없습니다.</td></tr>
                                         )}
                                     </tbody>
                                 </table>
@@ -2469,6 +2858,7 @@
                         addedAtIso: nowIso,
                         addedAtTs: now.getTime(),
                         interviewDate: null,
+                        interviewLocationType: 'separate',
                         expectedStartDate,
                         offerLetter: {
                             status: 'pending',
@@ -2740,7 +3130,7 @@
                                                             <div className="text-slate-700">{record.jobTitle}</div>
                                                             <div className="text-xs text-slate-400 mt-1">{record.team}</div>
                                                         </td>
-                                                        <td className="px-4 py-3"><Badge colorClass="bg-slate-100 text-slate-600 border-slate-200">{candidate.status || '-'}</Badge></td>
+                                                        <td className="px-4 py-3"><CandidateStatusBadge status={candidate.status} /></td>
                                                         <td className="px-4 py-3 text-right">
                                                             <button type="button" onClick={() => handleManualOfferAdd(record)} className="px-3 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-700 text-xs font-bold">대상 추가</button>
                                                         </td>
@@ -3085,11 +3475,15 @@
                                         {STAGES.map(stage => {
                                             const totalStageCount = candidates.filter(c => c.status === stage).length;
                                             const colCandidates = filteredCandidates.filter(c => c.status === stage);
+                                            const stageMeta = getCandidateStatusMeta(stage);
+                                            const StageIcon = stageMeta.icon;
                                             return (
                                                 <div key={stage} className="w-80 flex flex-col bg-slate-50 rounded-xl border border-slate-200/60 shadow-sm max-h-full">
-                                                    <div className={`p-3 border-b border-gray-100 flex justify-between items-center rounded-t-xl bg-white`}><div className="flex items-center gap-2"><div className={`w-2.5 h-2.5 rounded-full bg-brand-500`}></div><span className="font-bold text-gray-700">{stage}</span></div><span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs font-bold">{isFilteringCandidates ? `${colCandidates.length}/${totalStageCount}` : colCandidates.length}</span></div>
+                                                    <div className={`p-3 border-b border-gray-100 flex justify-between items-center rounded-t-xl bg-white`}><div className="flex items-center gap-2"><div className={`w-7 h-7 rounded-lg border flex items-center justify-center ${stageMeta.iconBox}`}><StageIcon className="w-4 h-4" /></div><span className="font-bold text-gray-700">{stage}</span></div><span className={`${stageMeta.badge} border px-2 py-0.5 rounded text-xs font-bold`}>{isFilteringCandidates ? `${colCandidates.length}/${totalStageCount}` : colCandidates.length}</span></div>
                                                     <div className="p-2 flex-1 overflow-y-auto space-y-2 custom-scrollbar">
                                                         {colCandidates.map(c => {
+                                                            const cardStatusMeta = getCandidateStatusMeta(c.status);
+                                                            const CardStatusIcon = cardStatusMeta.icon;
                                                             const interviewState = getInterviewOpsState(c);
                                                             const requestLabel = interviewState === 'requestNeeded' ? '사람인 요청 전' : interviewState === 'requested' ? '요청 완료' : interviewState === 'confirmed' ? '일정 확정' : '';
                                                             const requestColor = interviewState === 'requestNeeded' ? 'bg-orange-50 text-orange-700' : interviewState === 'requested' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700';
@@ -3104,7 +3498,7 @@
                                                                             </button>
                                                                         </div>
                                                                     )}
-                                                                    <div className="flex justify-between items-start mb-2 pr-6"><h4 className="font-bold text-gray-800">{c.name}</h4><span className="text-xs font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{formatCandidateAddedAt(c)}</span></div>
+                                                                    <div className="flex justify-between items-start mb-2 pr-6"><div className="flex items-center gap-2 min-w-0"><div className={`w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 ${cardStatusMeta.iconBox}`}><CardStatusIcon className="w-4 h-4" /></div><h4 className="font-bold text-gray-800 truncate">{c.name}</h4></div><span className="text-xs font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{formatCandidateAddedAt(c)}</span></div>
                                                                     <div className="text-xs text-gray-500 mb-2 truncate">{c.email}</div>
                                                                     <div className="text-xs text-gray-400 mb-3 truncate">{c.phone}</div>
                                                                     <div className="mb-2 inline-flex items-center px-2 py-1 rounded text-xs font-bold bg-slate-100 text-slate-600">{c.source || '지원경로 미기록'}</div>
@@ -3150,6 +3544,7 @@
                     case 'closed': return <JobList type="closed" />;
                     case 'trash': return <JobList type="trash" />;
                     case 'calendar': return <CalendarView />;
+                    case 'smsCenter': return <SmsCenterView />;
                     case 'offerLetters': return <OfferLetterView />;
                     case 'onboardingMails': return <OnboardingMailView />;
                     case 'startCalendar': return <StartDateCalendarView />;
@@ -3183,6 +3578,7 @@
                                         { id: 'active', label: '진행중인 공고', icon: Icons.Briefcase, count: activeJobs.length },
                                         { id: 'candidates', label: '전체 지원자', icon: Icons.Users, count: liveJobs.reduce((acc, job) => acc + (job.candidates || []).length, 0) },
                                         { id: 'calendar', label: '면접 일정', icon: Icons.Calendar, count: scheduleAlerts.todayInterviews.length },
+                                        { id: 'smsCenter', label: '문자보내기', icon: Icons.Phone, count: recruitSmsPendingCount },
                                         { id: 'offerLetters', label: '오퍼레터', icon: Icons.FileText, count: postHireStats.offerPending },
                                         { id: 'onboardingMails', label: '입사안내메일', icon: Icons.Mail, count: postHireStats.onboardingPending },
                                         { id: 'startCalendar', label: '입사일 캘린더', icon: Icons.Calendar, count: startDateCandidateRecords.length }
@@ -3301,9 +3697,7 @@
                                             {selectedCandidate.phone && <span className="flex items-center gap-1"><Icons.Phone className="w-4 h-4"/> {selectedCandidate.phone}</span>}
                                         </div>
                                     </div>
-                                    <div className={`px-3 py-1.5 rounded-lg text-sm font-bold bg-blue-50 text-blue-600`}>
-                                        {selectedCandidate.status}
-                                    </div>
+                                    <CandidateStatusBadge status={selectedCandidate.status} />
                                 </div>
 
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -3406,6 +3800,7 @@
                                                 <div className="rounded-lg border border-blue-100 bg-white/70 p-3">
                                                     <div className="text-xs text-blue-600 mb-1">확정 일정</div>
                                                     <div className="font-medium text-blue-900">{formatDateTimeLabel(selectedCandidate.interviewDate)}</div>
+                                                    <div className="text-xs text-blue-500 mt-1">{getInterviewLocationLabel(selectedCandidate)}</div>
                                                 </div>
                                             </div>
                                             <button
@@ -3419,10 +3814,25 @@
 
                                         <div className="bg-white border border-gray-200 rounded-lg p-4">
                                             <h4 className="font-bold text-gray-800 mb-2">확정 면접 일정</h4>
-                                            <input type="datetime-local" className="border border-gray-200 rounded p-2 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500"
-                                                value={selectedCandidate.interviewDate || ''}
-                                                onChange={(e) => handleUpdateCandidateInterview(e.target.value)} />
-                                            <p className="text-xs text-gray-500 mt-2">사람인에서 지원자 응답을 확인한 뒤 최종 면접 시간을 입력하면 캘린더에 반영됩니다.</p>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-500 mb-1">일시</label>
+                                                    <input type="datetime-local" className="border border-gray-200 rounded p-2 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500"
+                                                        value={selectedCandidate.interviewDate || ''}
+                                                        onChange={(e) => handleUpdateCandidateInterview(e.target.value)} />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs font-bold text-gray-500 mb-1">장소/방식</label>
+                                                    <select
+                                                        value={selectedCandidate.interviewLocationType || selectedCandidate.interviewMethod || 'separate'}
+                                                        onChange={(e) => handleUpdateCandidateInterviewLocation(e.target.value)}
+                                                        className="border border-gray-200 rounded p-2 text-sm w-full bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                                                    >
+                                                        {INTERVIEW_LOCATION_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <p className="text-xs text-gray-500 mt-2">확정 면접 시간과 장소/방식을 입력하면 캘린더와 면접 안내 문자 문구에 반영됩니다.</p>
                                         </div>
 
                                         {activeJob && !isExpired(activeJob.period.end) && (
@@ -3466,10 +3876,24 @@
                                 {/* 하단 액션 */}
                                 {viewMode === 'detail' && activeJob && !isExpired(activeJob.period.end) && (
                                     <div className="grid grid-cols-3 gap-2 pt-4 border-t">
-                                        {STAGES.map(s => <button key={s} onClick={async () => {
-                                            if (!activeJob?.id || !selectedCandidate?.id) return;
-                                            await updateCandidatePipelineStatus(activeJob.id, selectedCandidate.id, s, { closeModal: true });
-                                        }} className={`border py-2 rounded text-xs hover:bg-gray-50 ${selectedCandidate.status === s ? 'bg-slate-800 text-white' : ''}`}>{s}</button>)}
+                                        {STAGES.map(s => {
+                                            const meta = getCandidateStatusMeta(s);
+                                            const StatusIcon = meta.icon;
+                                            const isSelected = selectedCandidate.status === s;
+                                            return (
+                                                <button
+                                                    key={s}
+                                                    onClick={async () => {
+                                                        if (!activeJob?.id || !selectedCandidate?.id) return;
+                                                        await updateCandidatePipelineStatus(activeJob.id, selectedCandidate.id, s, { closeModal: true });
+                                                    }}
+                                                    className={`border py-2 rounded text-xs font-bold hover:bg-gray-50 flex items-center justify-center gap-1.5 ${isSelected ? meta.badge : 'bg-white text-slate-500 border-slate-200'}`}
+                                                >
+                                                    <StatusIcon className="w-3.5 h-3.5" />
+                                                    {s}
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                 )}
                             </div>
