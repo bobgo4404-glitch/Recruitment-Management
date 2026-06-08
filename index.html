@@ -197,6 +197,13 @@
         ];
         const OFFER_LETTER_MANUAL_JOB_ID = 'offer_letter_manual_targets';
         const OFFER_LETTER_MANUAL_JOB_TITLE = '공고 미지정';
+        const RECRUIT_SMS_WORKER_URL_STORAGE_KEY = 'recruitSmsWorkerUrl';
+        const RECRUIT_SMS_CLIENT_TOKEN_STORAGE_KEY = 'recruitSmsClientToken';
+        const DEFAULT_RECRUIT_SMS_WORKER_URL = '';
+        const RECRUIT_SMS_KIND_LABELS = {
+            interview: '면접 안내',
+            hired: '최종합격 안내'
+        };
         const getOptionLabel = (options, id) => options.find((option) => option.id === id)?.label || id || '-';
         const generateId = () => Math.random().toString(36).substr(2, 9);
         const getScheduleRequestStatus = (candidate) => candidate?.scheduleRequest?.status || 'draft';
@@ -331,6 +338,43 @@
             if (job?.offerOnly) return '부서 미지정';
             return job?.team || '미지정';
         };
+        const readRecruitSmsConfig = () => ({
+            workerUrl: (window.localStorage?.getItem(RECRUIT_SMS_WORKER_URL_STORAGE_KEY) || DEFAULT_RECRUIT_SMS_WORKER_URL || '').trim(),
+            clientToken: (window.localStorage?.getItem(RECRUIT_SMS_CLIENT_TOKEN_STORAGE_KEY) || '').trim()
+        });
+        const writeRecruitSmsConfig = ({ workerUrl, clientToken }) => {
+            if (workerUrl !== undefined) {
+                const value = String(workerUrl || '').trim();
+                if (value) window.localStorage?.setItem(RECRUIT_SMS_WORKER_URL_STORAGE_KEY, value);
+                else window.localStorage?.removeItem(RECRUIT_SMS_WORKER_URL_STORAGE_KEY);
+            }
+            if (clientToken !== undefined) {
+                const value = String(clientToken || '').trim();
+                if (value) window.localStorage?.setItem(RECRUIT_SMS_CLIENT_TOKEN_STORAGE_KEY, value);
+                else window.localStorage?.removeItem(RECRUIT_SMS_CLIENT_TOKEN_STORAGE_KEY);
+            }
+        };
+        const recruitSmsLatest = (candidate, kind = '') => {
+            const history = Array.isArray(candidate?.smsHistory) ? candidate.smsHistory : [];
+            return history.find((item) => !kind || item.kind === kind) || null;
+        };
+        const buildRecruitSmsText = (kind, candidate, jobTitle) => {
+            const name = candidate?.name || '지원자';
+            const title = jobTitle || '지원 포지션';
+            if (kind === 'interview') {
+                return [
+                    `[엔코스] ${name}님, ${title} 면접 일정 안내드립니다.`,
+                    `일시: ${formatDateTimeLabel(candidate?.interviewDate)}`,
+                    '장소/방식: 별도 안내',
+                    '문의: 010-5442-4404'
+                ].join('\n');
+            }
+            return [
+                `[엔코스] ${name}님, ${title} 최종 합격을 안내드립니다.`,
+                '입사 및 오퍼레터 관련 세부사항은 별도 안내드리겠습니다.',
+                '문의: 010-5442-4404'
+            ].join('\n');
+        };
         
         const getDday = (endDate) => {
             const today = new Date();
@@ -442,6 +486,7 @@
             const [editingJob, setEditingJob] = useState(null);
             const [isCandidateModalOpen, setIsCandidateModalOpen] = useState(false);
             const [selectedCandidate, setSelectedCandidate] = useState(null);
+            const [smsSendingKey, setSmsSendingKey] = useState('');
 
             useEffect(() => {
                 const checkFirebase = () => {
@@ -518,6 +563,19 @@
             const activeJobs = useMemo(() => liveJobs.filter(j => !j.offerOnly && j.period?.end && !isExpired(j.period.end)), [liveJobs]);
             const closedJobs = useMemo(() => liveJobs.filter(j => !j.offerOnly && j.period?.end && isExpired(j.period.end)), [liveJobs]);
             const selectableJobs = useMemo(() => liveJobs.filter(j => !j.offerOnly), [liveJobs]);
+            const selectedCandidateRecord = useMemo(() => {
+                if (!selectedCandidate) return null;
+                const sourceJob = activeJob && (activeJob.candidates || []).some((candidate) => candidate.id === selectedCandidate.id)
+                    ? activeJob
+                    : liveJobs.find((job) => (job.candidates || []).some((candidate) => candidate.id === selectedCandidate.id));
+                if (!sourceJob) return null;
+                return {
+                    candidate: selectedCandidate,
+                    jobId: sourceJob.id,
+                    jobTitle: sourceJob.offerOnly ? OFFER_LETTER_MANUAL_JOB_TITLE : (sourceJob.title || '-'),
+                    team: getCandidateTeamLabel(selectedCandidate, sourceJob)
+                };
+            }, [selectedCandidate, activeJob, liveJobs]);
             const hiredCandidateRecords = useMemo(() => {
                 return liveJobs.flatMap((job) => (job.candidates || [])
                     .filter((candidate) => isHiredCandidate(candidate))
@@ -947,6 +1005,130 @@
                     }
                 }
                 return updatedCandidates;
+            };
+            const configureRecruitSmsWorker = () => {
+                const current = readRecruitSmsConfig();
+                const workerUrl = window.prompt('Cloudflare Worker 문자 발송 URL을 입력하세요.', current.workerUrl);
+                if (workerUrl === null) return false;
+                const clientToken = window.prompt('Worker 발송 토큰을 입력하세요. 토큰을 쓰지 않으면 비워두세요.', current.clientToken);
+                if (clientToken === null) return false;
+                writeRecruitSmsConfig({ workerUrl, clientToken });
+                alert('문자 발송 설정을 저장했습니다.');
+                return true;
+            };
+            const saveRecruitSmsHistory = async (record, entry) => {
+                if (!record?.jobId || !record?.candidate?.id) return null;
+                return updatePostHireCandidateRecord(record.jobId, record.candidate.id, (candidate) => {
+                    const nextCandidate = {
+                        ...candidate,
+                        smsHistory: [entry, ...((candidate.smsHistory || []).filter(Boolean))].slice(0, 50)
+                    };
+                    const statusLabel = entry.status === 'success' ? '성공' : '실패';
+                    return appendCandidateHistory(nextCandidate, `문자 발송 ${statusLabel}: ${entry.kindLabel}`, entry.at);
+                });
+            };
+            const handleSendRecruitSms = async (record, kind) => {
+                if (!record?.jobId || !record?.candidate?.id) return;
+                const candidate = record.candidate;
+                const phone = normalizePhone(candidate.phone);
+                const kindLabel = RECRUIT_SMS_KIND_LABELS[kind] || '문자';
+                if (!phone) {
+                    alert('지원자 연락처가 없어 문자를 발송할 수 없습니다.');
+                    return;
+                }
+                if (kind === 'interview' && !candidate.interviewDate) {
+                    alert('면접 안내 문자는 확정 면접 일정을 입력한 뒤 발송할 수 있습니다.');
+                    return;
+                }
+
+                let config = readRecruitSmsConfig();
+                if (!config.workerUrl) {
+                    const configured = configureRecruitSmsWorker();
+                    if (!configured) return;
+                    config = readRecruitSmsConfig();
+                }
+                if (!config.workerUrl) {
+                    alert('Cloudflare Worker URL이 없어 문자를 발송할 수 없습니다.');
+                    return;
+                }
+
+                const defaultMessage = buildRecruitSmsText(kind, candidate, record.jobTitle);
+                const smsTxt = window.prompt(`${kindLabel} 문자 내용을 확인하고 필요하면 수정하세요.`, defaultMessage);
+                if (smsTxt === null) return;
+                const message = smsTxt.trim();
+                if (!message) {
+                    alert('문자 내용을 입력해주세요.');
+                    return;
+                }
+                const confirmed = window.confirm(`${candidate.name}님에게 ${kindLabel} 문자를 발송할까요?\n\n수신번호: ${phone}\n\n${message}`);
+                if (!confirmed) return;
+
+                const nowIso = new Date().toISOString();
+                const sendingKey = `${record.jobId}:${candidate.id}:${kind}`;
+                setSmsSendingKey(sendingKey);
+                let resultPayload = null;
+                let entryStatus = 'failed';
+                let errorMessage = '';
+
+                try {
+                    const headers = { 'Content-Type': 'application/json' };
+                    if (config.clientToken) headers['X-Recruit-Sms-Token'] = config.clientToken;
+                    const response = await fetch(config.workerUrl, {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify({
+                            kind,
+                            recipients: [{
+                                candidateId: candidate.id,
+                                name: candidate.name,
+                                phone,
+                                message
+                            }],
+                            meta: {
+                                jobId: record.jobId,
+                                jobTitle: record.jobTitle,
+                                team: record.team,
+                                sentAt: nowIso
+                            }
+                        })
+                    });
+                    resultPayload = await response.json().catch(() => null);
+                    if (!response.ok || !resultPayload?.ok) {
+                        throw new Error(resultPayload?.message || `문자 발송 요청 실패 (${response.status})`);
+                    }
+                    entryStatus = 'success';
+                } catch (error) {
+                    errorMessage = error?.message || String(error);
+                }
+
+                const resultData = resultPayload?.data || {};
+                const entry = {
+                    id: generateId(),
+                    kind,
+                    kindLabel,
+                    at: nowIso,
+                    status: entryStatus,
+                    phone,
+                    message,
+                    resultCode: resultPayload?.resultCode || resultData.resultCode || '',
+                    msgGroupId: resultData.msgGroupId || '',
+                    msgType: resultData.msgType || '',
+                    successCnt: resultData.successCnt || '',
+                    failCnt: resultData.failCnt || '',
+                    blockCnt: resultData.blockCnt || '',
+                    errorMessage
+                };
+
+                try {
+                    await saveRecruitSmsHistory(record, entry);
+                } finally {
+                    setSmsSendingKey('');
+                }
+                if (entryStatus === 'success') {
+                    alert(`${kindLabel} 문자를 발송했습니다.`);
+                } else {
+                    alert(`${kindLabel} 문자 발송에 실패했습니다.\n${errorMessage || '응답을 확인해주세요.'}`);
+                }
             };
             const handleRecordOfferSent = async (record) => {
                 if (!record?.jobId || !record?.candidate?.id) return;
@@ -2375,6 +2557,7 @@
                                             <th className="px-5 py-3 font-semibold">입사예정일</th>
                                             <th className="px-5 py-3 font-semibold">오퍼레터 상태</th>
                                             <th className="px-5 py-3 font-semibold">최근 이력</th>
+                                            <th className="px-5 py-3 font-semibold">문자</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-50">
@@ -2438,11 +2621,29 @@
                                                             {offerState.history.length === 0 && <div className="text-xs text-slate-400">기록 없음</div>}
                                                         </div>
                                                     </td>
+                                                    <td className="px-5 py-4 min-w-32">
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleSendRecruitSms(record, 'hired');
+                                                            }}
+                                                            disabled={!candidate.phone || smsSendingKey === `${record.jobId}:${candidate.id}:hired`}
+                                                            className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        >
+                                                            합격 문자
+                                                        </button>
+                                                        {recruitSmsLatest(candidate, 'hired') && (
+                                                            <div className="text-[11px] text-slate-400 mt-2">
+                                                                {recruitSmsLatest(candidate, 'hired').status === 'success' ? '최근 성공' : '최근 실패'}
+                                                            </div>
+                                                        )}
+                                                    </td>
                                                 </tr>
                                             );
                                         })}
                                         {filteredRecords.length === 0 && (
-                                            <tr><td colSpan="6" className="py-12 text-center text-slate-400">조건에 맞는 오퍼레터 대상자가 없습니다.</td></tr>
+                                            <tr><td colSpan="7" className="py-12 text-center text-slate-400">조건에 맞는 오퍼레터 대상자가 없습니다.</td></tr>
                                         )}
                                     </tbody>
                                 </table>
@@ -3125,6 +3326,48 @@
                                 <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                                     <h4 className="font-bold mb-2 flex items-center gap-2"><Icons.FileText className="w-4 h-4" /> 비고</h4>
                                     <p className="text-gray-700 text-sm whitespace-pre-wrap max-h-60 overflow-y-auto">{selectedCandidate.note || "내용 없음"}</p>
+                                </div>
+
+                                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                                        <div>
+                                            <h4 className="font-bold mb-1 flex items-center gap-2"><Icons.Phone className="w-4 h-4 text-brand-600" /> 문자 발송</h4>
+                                            <p className="text-xs text-slate-500">
+                                                {recruitSmsLatest(selectedCandidate)
+                                                    ? `최근 ${recruitSmsLatest(selectedCandidate).kindLabel}: ${recruitSmsLatest(selectedCandidate).status === 'success' ? '성공' : '실패'} · ${formatDateTimeLabel(recruitSmsLatest(selectedCandidate).at)}`
+                                                    : '발송 이력이 없습니다.'}
+                                            </p>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            {isInterviewCandidate(selectedCandidate) && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSendRecruitSms(selectedCandidateRecord, 'interview')}
+                                                    disabled={!selectedCandidateRecord || !selectedCandidate.phone || !selectedCandidate.interviewDate || smsSendingKey === `${selectedCandidateRecord?.jobId}:${selectedCandidate.id}:interview`}
+                                                    className="px-3 py-2 rounded-lg text-sm font-bold bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    면접 안내 문자
+                                                </button>
+                                            )}
+                                            {isOfferLetterTarget(selectedCandidate) && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSendRecruitSms(selectedCandidateRecord, 'hired')}
+                                                    disabled={!selectedCandidateRecord || !selectedCandidate.phone || smsSendingKey === `${selectedCandidateRecord?.jobId}:${selectedCandidate.id}:hired`}
+                                                    className="px-3 py-2 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    합격 안내 문자
+                                                </button>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={configureRecruitSmsWorker}
+                                                className="px-3 py-2 rounded-lg text-sm bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
+                                            >
+                                                Worker 설정
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div className="bg-white p-4 rounded-xl border border-gray-200">
