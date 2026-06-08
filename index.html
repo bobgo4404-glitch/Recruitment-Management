@@ -1136,9 +1136,9 @@
             };
             const configureRecruitSmsWorker = () => {
                 const current = readRecruitSmsConfig();
-                const workerUrl = window.prompt('Cloudflare Worker 문자 발송 URL을 입력하세요.', current.workerUrl);
+                const workerUrl = window.prompt('문자 발송 URL을 입력하세요. 고정 IP 방식은 http://127.0.0.1:8787 을 입력합니다.', current.workerUrl);
                 if (workerUrl === null) return false;
-                const clientToken = window.prompt('Worker 발송 토큰을 입력하세요. 토큰을 쓰지 않으면 비워두세요.', current.clientToken);
+                const clientToken = window.prompt('발송 토큰을 입력하세요. 로컬 중계 서버를 쓰면 비워두세요.', current.clientToken);
                 if (clientToken === null) return false;
                 writeRecruitSmsConfig({ workerUrl, clientToken });
                 alert('문자 발송 설정을 저장했습니다.');
@@ -2522,7 +2522,7 @@
                                 <p className="text-gray-500 mt-1">면접예정자와 합격자 문자 발송, 면접 장소/방식, 발송 이력을 한 화면에서 관리합니다.</p>
                             </div>
                             <button type="button" onClick={configureRecruitSmsWorker} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2">
-                                <Icons.Cloud className="w-4 h-4" /> Worker 설정
+                                <Icons.Cloud className="w-4 h-4" /> 발송 URL 설정
                             </button>
                         </div>
 
@@ -3758,7 +3758,7 @@
                                                 onClick={configureRecruitSmsWorker}
                                                 className="px-3 py-2 rounded-lg text-sm bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
                                             >
-                                                Worker 설정
+                                                발송 URL 설정
                                             </button>
                                         </div>
                                     </div>
