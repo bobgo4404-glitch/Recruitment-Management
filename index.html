@@ -2477,6 +2477,8 @@
                         return matchesQuery && matchesStage && matchesSource;
                     }).sort((a, b) => (getCandidateAddedDate(b.candidate)?.getTime() || 0) - (getCandidateAddedDate(a.candidate)?.getTime() || 0));
                 }, [records, query, stageFilter, sourceFilter]);
+                const pagination = useTablePagination(filteredRecords, [query, stageFilter, sourceFilter]);
+                const pagedRecords = pagination.pageRecords;
                 const poolStats = [
                     { label: '전체 지원자', value: records.length, tone: 'text-slate-900' },
                     { label: '진행중', value: records.filter(({ candidate }) => !isFinalCandidate(candidate)).length, tone: 'text-brand-600' },
@@ -2532,7 +2534,7 @@
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-50">
-                                        {filteredRecords.map((record) => {
+                                        {pagedRecords.map((record) => {
                                             const candidate = record.candidate;
                                             return (
                                                 <tr key={`${record.jobId}-${candidate.id}`} onClick={() => { setActiveJobId(record.jobId); setSelectedCandidate(candidate); setIsCandidateModalOpen(true); }} className="hover:bg-brand-50/40 cursor-pointer">
@@ -2554,6 +2556,7 @@
                                     </tbody>
                                 </table>
                             </div>
+                            <PaginationControls pagination={pagination} />
                         </div>
                     </div>
                 );
