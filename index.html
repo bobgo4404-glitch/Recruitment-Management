@@ -248,7 +248,7 @@
         const RECRUIT_SMS_CLIENT_TOKEN_STORAGE_KEY = 'recruitSmsClientToken';
         const DEFAULT_RECRUIT_SMS_WORKER_URL = '';
         const RECRUIT_SMS_KIND_LABELS = {
-            interview: '면접 안내',
+            interview: '면접장소 안내',
             hired: '최종합격 안내'
         };
         const getOptionLabel = (options, id) => options.find((option) => option.id === id)?.label || id || '-';
@@ -417,31 +417,23 @@
         };
         const getInterviewLocationLabel = (candidate) => getInterviewLocationOption(candidate)?.label || '별도 안내';
         const getInterviewLocationMessage = (candidate) => getInterviewLocationOption(candidate)?.message || '별도 안내';
-        const buildRecruitSmsText = (kind, candidate, jobTitle) => {
-            const name = candidate?.name || '지원자';
-            const title = jobTitle || '지원 포지션';
-            if (kind === 'interview') {
-                return [
-                    '[엔코스 면접 안내]',
-                    '',
-                    '안녕하세요.',
-                    '(주)엔코스 채용담당자입니다.',
-                    '',
-                    `면접 일시: ${formatDateTimeLabel(candidate?.interviewDate)}`,
-                    '면접 장소: (주)엔코스 본사',
-                    '회사 주소: 경기도 오산시 가장산업서로 56-24',
-                    '',
-                    '차량 이용 시 주차장 주소는 가장산업서북로 39-18(아이엠텍) 건물 뒤편 공터입니다.',
-                    '도착 후 엔코스 건물 입구에서 경영지원팀으로 벨을 눌러주시면 안내드리겠습니다.',
-                    '',
-                    '일정 변경 등 문의: 채용담당자 070-4135-2568',
-                    '감사합니다.'
-                ].join('\n');
-            }
+        const buildRecruitSmsText = (kind, candidate) => {
+            const interviewDateText = candidate?.interviewDate ? formatDateTimeLabel(candidate.interviewDate) : '[면접 일시]';
             return [
-                `[엔코스] ${name}님, ${title} 최종 합격을 안내드립니다.`,
-                '입사 및 오퍼레터 관련 세부사항은 별도 안내드리겠습니다.',
-                '문의: 010-5442-4404'
+                '[엔코스 면접 안내]',
+                '',
+                '안녕하세요.',
+                '(주)엔코스 채용담당자입니다.',
+                '',
+                `면접 일시: ${interviewDateText}`,
+                '면접 장소: (주)엔코스 본사',
+                '회사 주소: 경기도 오산시 가장산업서로 56-24',
+                '',
+                '차량 이용 시 주차장 주소는 가장산업서북로 39-18(아이엠텍) 건물 뒤편 공터입니다.',
+                '도착 후 엔코스 건물 입구에서 경영지원팀으로 벨을 눌러주시면 안내드리겠습니다.',
+                '',
+                '일정 변경 등 문의: 채용담당자 010-5442-4404',
+                '감사합니다.'
             ].join('\n');
         };
         
@@ -806,7 +798,7 @@
             }, [offerLetterCandidateRecords]);
             const recruitSmsTargetRecords = useMemo(() => {
                 return liveJobs.flatMap((job) => (job.candidates || [])
-                    .filter((candidate) => isInterviewCandidate(candidate) || isOfferLetterTarget(candidate))
+                    .filter((candidate) => isInterviewCandidate(candidate))
                     .map((candidate) => ({
                         candidate,
                         jobId: job.id,
@@ -832,9 +824,8 @@
             }, [liveJobs]);
             const recruitSmsPendingCount = useMemo(() => {
                 return recruitSmsTargetRecords.filter(({ candidate }) => {
-                    const interviewPending = isInterviewCandidate(candidate) && candidate.interviewDate && recruitSmsLatest(candidate, 'interview')?.status !== 'success';
-                    const hiredPending = isOfferLetterTarget(candidate) && recruitSmsLatest(candidate, 'hired')?.status !== 'success';
-                    return !!normalizePhone(candidate.phone) && (interviewPending || hiredPending);
+                    const interviewPending = isInterviewCandidate(candidate) && recruitSmsLatest(candidate, 'interview')?.status !== 'success';
+                    return !!normalizePhone(candidate.phone) && interviewPending;
                 }).length;
             }, [recruitSmsTargetRecords]);
             const postHireStats = useMemo(() => {
@@ -1259,12 +1250,12 @@
                 const candidate = record.candidate;
                 const phone = normalizePhone(candidate.phone);
                 const kindLabel = RECRUIT_SMS_KIND_LABELS[kind] || '문자';
-                if (!phone) {
-                    alert('지원자 연락처가 없어 문자를 발송할 수 없습니다.');
+                if (kind !== 'interview') {
+                    alert('현재 문자 발송은 면접장소 안내에 한해 사용합니다.');
                     return;
                 }
-                if (kind === 'interview' && !candidate.interviewDate) {
-                    alert('면접 안내 문자는 확정 면접 일정을 입력한 뒤 발송할 수 있습니다.');
+                if (!phone) {
+                    alert('지원자 연락처가 없어 문자를 발송할 수 없습니다.');
                     return;
                 }
 
@@ -2579,17 +2570,14 @@
                     ].join(' ').toLowerCase();
                     return !searchText || haystack.includes(searchText);
                 };
-                const isInterviewReady = (candidate) => isInterviewCandidate(candidate) && !!candidate.interviewDate && !!normalizePhone(candidate.phone);
-                const isHiredReady = (candidate) => isOfferLetterTarget(candidate) && !!normalizePhone(candidate.phone);
+                const isInterviewReady = (candidate) => isInterviewCandidate(candidate) && !!normalizePhone(candidate.phone);
                 const filteredTargets = useMemo(() => {
                     return recruitSmsTargetRecords.filter((record) => {
                         const candidate = record.candidate;
-                        const missingInfo = !normalizePhone(candidate.phone) || (isInterviewCandidate(candidate) && !candidate.interviewDate);
+                        const missingInfo = !normalizePhone(candidate.phone);
                         const matchesTarget =
                             targetFilter === 'all' ||
-                            (targetFilter === 'ready' && (isInterviewReady(candidate) || isHiredReady(candidate))) ||
-                            (targetFilter === 'interview' && isInterviewCandidate(candidate)) ||
-                            (targetFilter === 'hired' && isOfferLetterTarget(candidate)) ||
+                            (targetFilter === 'ready' && isInterviewReady(candidate)) ||
                             (targetFilter === 'missing' && missingInfo);
                         return matchesTarget && matchesSearch(record);
                     });
@@ -2599,16 +2587,14 @@
                 }, [recruitSmsHistoryEntries, searchText]);
                 const stats = [
                     { label: '발송 가능', value: recruitSmsPendingCount, tone: 'text-brand-600' },
-                    { label: '면접 대상', value: recruitSmsTargetRecords.filter(({ candidate }) => isInterviewCandidate(candidate)).length, tone: 'text-orange-600' },
-                    { label: '합격 대상', value: recruitSmsTargetRecords.filter(({ candidate }) => isOfferLetterTarget(candidate)).length, tone: 'text-emerald-600' },
+                    { label: '면접 대상', value: recruitSmsTargetRecords.length, tone: 'text-orange-600' },
+                    { label: '연락처 없음', value: recruitSmsTargetRecords.filter(({ candidate }) => !normalizePhone(candidate.phone)).length, tone: 'text-red-500' },
                     { label: '발송 이력', value: recruitSmsHistoryEntries.length, tone: 'text-slate-900' }
                 ];
                 const filterOptions = [
                     { id: 'ready', label: '발송 가능' },
-                    { id: 'all', label: '전체 대상' },
-                    { id: 'interview', label: '면접 대상' },
-                    { id: 'hired', label: '합격 대상' },
-                    { id: 'missing', label: '정보 부족' }
+                    { id: 'all', label: '전체 면접 대상' },
+                    { id: 'missing', label: '연락처 없음' }
                 ];
                 const openCandidate = (record) => {
                     setActiveJobId(record.jobId);
@@ -2621,7 +2607,7 @@
                         <div className="flex flex-wrap items-end justify-between gap-4 mb-8">
                             <div>
                                 <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Icons.Phone className="w-6 h-6 text-brand-600" /> 문자보내기</h2>
-                                <p className="text-gray-500 mt-1">면접예정자와 합격자 문자 발송, 면접 장소/방식, 발송 이력을 한 화면에서 관리합니다.</p>
+                                <p className="text-gray-500 mt-1">면접장소 안내 문자 발송과 발송 이력을 관리합니다. 면접 일정과 채용 확정 안내는 사람인 기준으로 운영합니다.</p>
                             </div>
                             <button type="button" onClick={configureRecruitSmsWorker} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2">
                                 <Icons.Cloud className="w-4 h-4" /> 발송 URL 설정
@@ -2677,9 +2663,8 @@
                                         {filteredTargets.map((record) => {
                                             const candidate = record.candidate;
                                             const phone = normalizePhone(candidate.phone);
-                                            const latest = recruitSmsLatest(candidate);
+                                            const latest = recruitSmsLatest(candidate, 'interview');
                                             const interviewKey = `${record.jobId}:${candidate.id}:interview`;
-                                            const hiredKey = `${record.jobId}:${candidate.id}:hired`;
                                             return (
                                                 <tr key={`${record.jobId}-${candidate.id}`} onClick={() => openCandidate(record)} className="hover:bg-brand-50/40 cursor-pointer">
                                                     <td className="px-5 py-4 min-w-52">
@@ -2689,8 +2674,7 @@
                                                     </td>
                                                     <td className="px-5 py-4 min-w-36">
                                                         <div className="flex flex-wrap gap-1">
-                                                            {isInterviewCandidate(candidate) && <Badge colorClass="bg-orange-50 text-orange-600 border-orange-100">면접</Badge>}
-                                                            {isOfferLetterTarget(candidate) && <Badge colorClass="bg-emerald-50 text-emerald-600 border-emerald-100">합격</Badge>}
+                                                            <Badge colorClass="bg-orange-50 text-orange-600 border-orange-100">면접장소 안내</Badge>
                                                         </div>
                                                         {!phone && <div className="text-xs text-red-500 mt-2">연락처 없음</div>}
                                                     </td>
@@ -2733,34 +2717,18 @@
                                                     </td>
                                                     <td className="px-5 py-4 min-w-56">
                                                         <div className="flex flex-wrap gap-2">
-                                                            {isInterviewCandidate(candidate) && (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        handleSendRecruitSms(record, 'interview');
-                                                                    }}
-                                                                    disabled={!phone || !candidate.interviewDate || smsSendingKey === interviewKey}
-                                                                    className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                                >
-                                                                    면접 문자
-                                                                </button>
-                                                            )}
-                                                            {isOfferLetterTarget(candidate) && (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        handleSendRecruitSms(record, 'hired');
-                                                                    }}
-                                                                    disabled={!phone || smsSendingKey === hiredKey}
-                                                                    className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                                >
-                                                                    합격 문자
-                                                                </button>
-                                                            )}
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleSendRecruitSms(record, 'interview');
+                                                                }}
+                                                                disabled={!phone || smsSendingKey === interviewKey}
+                                                                className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            >
+                                                                장소 안내 문자
+                                                            </button>
                                                         </div>
-                                                        {isInterviewCandidate(candidate) && !candidate.interviewDate && <div className="text-[11px] text-orange-500 mt-2">면접 일시 입력 필요</div>}
                                                     </td>
                                                 </tr>
                                             );
@@ -3051,7 +3019,6 @@
                                             <th className="px-5 py-3 font-semibold">입사예정일</th>
                                             <th className="px-5 py-3 font-semibold">오퍼레터 상태</th>
                                             <th className="px-5 py-3 font-semibold">최근 이력</th>
-                                            <th className="px-5 py-3 font-semibold">문자</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-50">
@@ -3115,29 +3082,11 @@
                                                             {offerState.history.length === 0 && <div className="text-xs text-slate-400">기록 없음</div>}
                                                         </div>
                                                     </td>
-                                                    <td className="px-5 py-4 min-w-32">
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleSendRecruitSms(record, 'hired');
-                                                            }}
-                                                            disabled={!candidate.phone || smsSendingKey === `${record.jobId}:${candidate.id}:hired`}
-                                                            className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                        >
-                                                            합격 문자
-                                                        </button>
-                                                        {recruitSmsLatest(candidate, 'hired') && (
-                                                            <div className="text-[11px] text-slate-400 mt-2">
-                                                                {recruitSmsLatest(candidate, 'hired').status === 'success' ? '최근 성공' : '최근 실패'}
-                                                            </div>
-                                                        )}
-                                                    </td>
                                                 </tr>
                                             );
                                         })}
                                         {filteredRecords.length === 0 && (
-                                            <tr><td colSpan="7" className="py-12 text-center text-slate-400">조건에 맞는 오퍼레터 대상자가 없습니다.</td></tr>
+                                            <tr><td colSpan="6" className="py-12 text-center text-slate-400">조건에 맞는 오퍼레터 대상자가 없습니다.</td></tr>
                                         )}
                                     </tbody>
                                 </table>
@@ -3835,9 +3784,9 @@
                                         <div>
                                             <h4 className="font-bold mb-1 flex items-center gap-2"><Icons.Phone className="w-4 h-4 text-brand-600" /> 문자 발송</h4>
                                             <p className="text-xs text-slate-500">
-                                                {recruitSmsLatest(selectedCandidate)
-                                                    ? `최근 ${recruitSmsLatest(selectedCandidate).kindLabel}: ${recruitSmsLatest(selectedCandidate).status === 'success' ? '성공' : '실패'} · ${formatDateTimeLabel(recruitSmsLatest(selectedCandidate).at)}`
-                                                    : '발송 이력이 없습니다.'}
+                                                {recruitSmsLatest(selectedCandidate, 'interview')
+                                                    ? `최근 ${recruitSmsLatest(selectedCandidate, 'interview').kindLabel}: ${recruitSmsLatest(selectedCandidate, 'interview').status === 'success' ? '성공' : '실패'} · ${formatDateTimeLabel(recruitSmsLatest(selectedCandidate, 'interview').at)}`
+                                                    : '면접장소 안내 문자 발송 이력이 없습니다.'}
                                             </p>
                                         </div>
                                         <div className="flex flex-wrap gap-2">
@@ -3845,20 +3794,10 @@
                                                 <button
                                                     type="button"
                                                     onClick={() => handleSendRecruitSms(selectedCandidateRecord, 'interview')}
-                                                    disabled={!selectedCandidateRecord || !selectedCandidate.phone || !selectedCandidate.interviewDate || smsSendingKey === `${selectedCandidateRecord?.jobId}:${selectedCandidate.id}:interview`}
+                                                    disabled={!selectedCandidateRecord || !selectedCandidate.phone || smsSendingKey === `${selectedCandidateRecord?.jobId}:${selectedCandidate.id}:interview`}
                                                     className="px-3 py-2 rounded-lg text-sm font-bold bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
                                                 >
-                                                    면접 안내 문자
-                                                </button>
-                                            )}
-                                            {isOfferLetterTarget(selectedCandidate) && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleSendRecruitSms(selectedCandidateRecord, 'hired')}
-                                                    disabled={!selectedCandidateRecord || !selectedCandidate.phone || smsSendingKey === `${selectedCandidateRecord?.jobId}:${selectedCandidate.id}:hired`}
-                                                    className="px-3 py-2 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                >
-                                                    합격 안내 문자
+                                                    면접장소 안내 문자
                                                 </button>
                                             )}
                                             <button
@@ -3940,7 +3879,7 @@
                                                     </select>
                                                 </div>
                                             </div>
-                                            <p className="text-xs text-gray-500 mt-2">확정 면접 시간과 장소/방식을 입력하면 캘린더와 면접 안내 문자 문구에 반영됩니다.</p>
+                                            <p className="text-xs text-gray-500 mt-2">입력한 면접 시간과 장소/방식은 캘린더와 면접장소 안내 문자 문구에 반영됩니다.</p>
                                         </div>
 
                                         {activeJob && !isExpired(activeJob.period.end) && (
