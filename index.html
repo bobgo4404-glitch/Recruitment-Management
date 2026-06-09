@@ -227,10 +227,12 @@
         ];
         const SCHEDULE_REQUEST_STATUS_LABELS = {
             draft: '요청 전',
-            ready: '요청 전',
-            sent: '사람인 요청 완료',
-            responded: '사람인 응답 확인',
-            confirmed: '일정확정'
+            ready: '링크 생성',
+            sent: '요청 발송',
+            responded: '지원자 선택 완료',
+            confirmed: '최종확정',
+            failed: '발송 실패',
+            expired: '만료'
         };
         const OFFER_LETTER_STATUS_OPTIONS = [
             { id: 'pending', label: '발송전' },
@@ -246,8 +248,13 @@
         const OFFER_LETTER_MANUAL_JOB_TITLE = '공고 미지정';
         const RECRUIT_SMS_WORKER_URL_STORAGE_KEY = 'recruitSmsWorkerUrl';
         const RECRUIT_SMS_CLIENT_TOKEN_STORAGE_KEY = 'recruitSmsClientToken';
-        const DEFAULT_RECRUIT_SMS_WORKER_URL = '';
+        const SCHEDULE_REQUEST_API_URL_STORAGE_KEY = 'recruitScheduleRequestApiUrl';
+        const SCHEDULE_REQUEST_ADMIN_TOKEN_STORAGE_KEY = 'recruitScheduleRequestAdminToken';
+        const DEFAULT_RECRUIT_SMS_WORKER_URL = 'http://127.0.0.1:8787';
+        const DEFAULT_SCHEDULE_REQUEST_API_URL = '';
+        const MIN_SCHEDULE_REQUEST_OPTIONS = 3;
         const RECRUIT_SMS_KIND_LABELS = {
+            schedule_request: '면접일 조율 요청',
             interview: '면접장소 안내',
             hired: '최종합격 안내'
         };
@@ -293,6 +300,59 @@
                 hour: '2-digit',
                 minute: '2-digit'
             });
+        };
+        const toDateTimeLocalValue = (value) => {
+            const d = value ? new Date(value) : new Date();
+            if (Number.isNaN(d.getTime())) return '';
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const h = String(d.getHours()).padStart(2, '0');
+            const min = String(d.getMinutes()).padStart(2, '0');
+            return `${y}-${m}-${day}T${h}:${min}`;
+        };
+        const addDays = (date, days) => {
+            const d = new Date(date);
+            d.setDate(d.getDate() + days);
+            return d;
+        };
+        const buildDefaultScheduleOptionInputs = (candidate) => {
+            const base = candidate?.interviewDate ? new Date(candidate.interviewDate) : addDays(new Date(), 2);
+            if (Number.isNaN(base.getTime())) return ['', '', ''];
+            base.setMinutes(0, 0, 0);
+            if (base.getHours() < 9 || base.getHours() > 17) base.setHours(10, 0, 0, 0);
+            return [0, 1, 2].map((index) => {
+                const d = addDays(base, index);
+                if (index === 1) d.setHours(14, 0, 0, 0);
+                if (index === 2) d.setHours(10, 0, 0, 0);
+                return toDateTimeLocalValue(d);
+            });
+        };
+        const buildDefaultScheduleExpiresAt = () => {
+            const d = addDays(new Date(), 5);
+            d.setHours(23, 59, 0, 0);
+            return toDateTimeLocalValue(d);
+        };
+        const normalizeScheduleOptions = (values) => {
+            const seen = new Set();
+            return values
+                .map((value) => String(value || '').trim())
+                .filter(Boolean)
+                .filter((value) => {
+                    if (seen.has(value)) return false;
+                    seen.add(value);
+                    return true;
+                })
+                .map((dateTime, index) => ({
+                    id: `slot_${index + 1}`,
+                    dateTime,
+                    label: formatDateTimeLabel(dateTime)
+                }));
+        };
+        const getSelectedScheduleOption = (candidate) => {
+            const request = candidate?.scheduleRequest || {};
+            const options = Array.isArray(request.options) ? request.options : [];
+            return options.find((option) => option.id === request.selectedOptionId) || null;
         };
         const getCandidateAddedDate = (candidate) => {
             if (!candidate) return null;
@@ -392,19 +452,33 @@
             return job?.team || '미지정';
         };
         const readRecruitSmsConfig = () => ({
-            workerUrl: (window.localStorage?.getItem(RECRUIT_SMS_WORKER_URL_STORAGE_KEY) || DEFAULT_RECRUIT_SMS_WORKER_URL || '').trim(),
+            workerUrl: DEFAULT_RECRUIT_SMS_WORKER_URL,
             clientToken: (window.localStorage?.getItem(RECRUIT_SMS_CLIENT_TOKEN_STORAGE_KEY) || '').trim()
         });
         const writeRecruitSmsConfig = ({ workerUrl, clientToken }) => {
             if (workerUrl !== undefined) {
-                const value = String(workerUrl || '').trim();
-                if (value) window.localStorage?.setItem(RECRUIT_SMS_WORKER_URL_STORAGE_KEY, value);
-                else window.localStorage?.removeItem(RECRUIT_SMS_WORKER_URL_STORAGE_KEY);
+                window.localStorage?.setItem(RECRUIT_SMS_WORKER_URL_STORAGE_KEY, DEFAULT_RECRUIT_SMS_WORKER_URL);
             }
             if (clientToken !== undefined) {
                 const value = String(clientToken || '').trim();
                 if (value) window.localStorage?.setItem(RECRUIT_SMS_CLIENT_TOKEN_STORAGE_KEY, value);
                 else window.localStorage?.removeItem(RECRUIT_SMS_CLIENT_TOKEN_STORAGE_KEY);
+            }
+        };
+        const readScheduleRequestConfig = () => ({
+            apiUrl: (window.localStorage?.getItem(SCHEDULE_REQUEST_API_URL_STORAGE_KEY) || DEFAULT_SCHEDULE_REQUEST_API_URL || '').trim().replace(/\/+$/, ''),
+            adminToken: (window.localStorage?.getItem(SCHEDULE_REQUEST_ADMIN_TOKEN_STORAGE_KEY) || '').trim()
+        });
+        const writeScheduleRequestConfig = ({ apiUrl, adminToken }) => {
+            if (apiUrl !== undefined) {
+                const value = String(apiUrl || '').trim().replace(/\/+$/, '');
+                if (value) window.localStorage?.setItem(SCHEDULE_REQUEST_API_URL_STORAGE_KEY, value);
+                else window.localStorage?.removeItem(SCHEDULE_REQUEST_API_URL_STORAGE_KEY);
+            }
+            if (adminToken !== undefined) {
+                const value = String(adminToken || '').trim();
+                if (value) window.localStorage?.setItem(SCHEDULE_REQUEST_ADMIN_TOKEN_STORAGE_KEY, value);
+                else window.localStorage?.removeItem(SCHEDULE_REQUEST_ADMIN_TOKEN_STORAGE_KEY);
             }
         };
         const recruitSmsLatest = (candidate, kind = '') => {
@@ -431,6 +505,27 @@
                 '',
                 '차량 이용 시 주차장 주소는 가장산업서북로 39-18(아이엠텍) 건물 뒤편 공터입니다.',
                 '도착 후 엔코스 건물 입구에서 경영지원팀으로 벨을 눌러주시면 안내드리겠습니다.',
+                '',
+                '일정 변경 등 문의: 채용담당자 010-5442-4404',
+                '감사합니다.'
+            ].join('\n');
+        };
+        const buildScheduleRequestSmsText = (record, link, options) => {
+            const candidate = record?.candidate || {};
+            return [
+                '[엔코스 면접일 조율 요청]',
+                '',
+                '안녕하세요.',
+                '(주)엔코스 채용담당자입니다.',
+                '',
+                `${candidate.name || '지원자'}님 면접 가능 일시 확인을 위해 아래 링크에서 가능한 일정을 1개 선택해 주세요.`,
+                link,
+                '',
+                '선택 가능 일정',
+                ...options.map((option, index) => `${index + 1}. ${option.label || formatDateTimeLabel(option.dateTime)}`),
+                '',
+                '제출 후 직접 수정은 어렵습니다.',
+                '최종 면접 일정은 회사 검토 후 별도 안내드립니다.',
                 '',
                 '일정 변경 등 문의: 채용담당자 010-5442-4404',
                 '감사합니다.'
@@ -655,6 +750,10 @@
             const [isCandidateModalOpen, setIsCandidateModalOpen] = useState(false);
             const [selectedCandidate, setSelectedCandidate] = useState(null);
             const [smsSendingKey, setSmsSendingKey] = useState('');
+            const [scheduleRequestModalRecord, setScheduleRequestModalRecord] = useState(null);
+            const [scheduleOptionInputs, setScheduleOptionInputs] = useState(['', '', '']);
+            const [scheduleRequestExpiresAt, setScheduleRequestExpiresAt] = useState('');
+            const [scheduleRequestSendingKey, setScheduleRequestSendingKey] = useState('');
 
             useEffect(() => {
                 const checkFirebase = () => {
@@ -688,7 +787,6 @@
                 });
                 return () => unsubscribe();
             }, [user, fbReady]);
-
             const firestoreWrite = async (jobId, data, isDelete = false) => {
                 if (!user) return;
                 const { setDoc, deleteDoc, doc } = window.fbServices.api;
@@ -731,6 +829,11 @@
             const activeJobs = useMemo(() => liveJobs.filter(j => !j.offerOnly && j.period?.end && !isExpired(j.period.end)), [liveJobs]);
             const closedJobs = useMemo(() => liveJobs.filter(j => !j.offerOnly && j.period?.end && isExpired(j.period.end)), [liveJobs]);
             const selectableJobs = useMemo(() => liveJobs.filter(j => !j.offerOnly), [liveJobs]);
+            useEffect(() => {
+                if (!selectedCandidate?.id) return;
+                const latest = liveJobs.flatMap((job) => job.candidates || []).find((candidate) => candidate.id === selectedCandidate.id);
+                if (latest && latest !== selectedCandidate) setSelectedCandidate(latest);
+            }, [liveJobs, selectedCandidate?.id]);
             const selectedCandidateRecord = useMemo(() => {
                 if (!selectedCandidate) return null;
                 const sourceJob = activeJob && (activeJob.candidates || []).some((candidate) => candidate.id === selectedCandidate.id)
@@ -1181,13 +1284,13 @@
                                 sentAt: c.scheduleRequest?.sentAt || nowIso
                             }
                         };
-                        return appendCandidateHistory(nextCandidate, '사람인 면접일자 요청 완료 기록', nowIso);
+                        return appendCandidateHistory(nextCandidate, '면접일 조율 요청 완료 기록', nowIso);
                     })
                 );
                 if (updatedCandidates) {
                     const latest = updatedCandidates.find(c => c.id === selectedCandidate.id);
                     if (latest) setSelectedCandidate(latest);
-                    alert('사람인 면접일자 요청 완료로 기록했습니다.');
+                    alert('면접일 조율 요청 완료로 기록했습니다.');
                 }
             };
             const updatePostHireCandidateRecord = async (jobId, candidateId, updater) => {
@@ -1226,12 +1329,21 @@
             };
             const configureRecruitSmsWorker = () => {
                 const current = readRecruitSmsConfig();
-                const workerUrl = window.prompt('문자 발송 URL을 입력하세요. 고정 IP 방식은 http://127.0.0.1:8787 을 입력합니다.', current.workerUrl);
-                if (workerUrl === null) return false;
+                alert(`문자 발송 URL은 ${DEFAULT_RECRUIT_SMS_WORKER_URL} 로 고정되어 있습니다.\n문자 발송 전 로컬 문자발송 서버가 실행 중인지 확인해주세요.`);
                 const clientToken = window.prompt('발송 토큰을 입력하세요. 로컬 중계 서버를 쓰면 비워두세요.', current.clientToken);
                 if (clientToken === null) return false;
-                writeRecruitSmsConfig({ workerUrl, clientToken });
+                writeRecruitSmsConfig({ workerUrl: DEFAULT_RECRUIT_SMS_WORKER_URL, clientToken });
                 alert('문자 발송 설정을 저장했습니다.');
+                return true;
+            };
+            const configureScheduleRequestApi = () => {
+                const current = readScheduleRequestConfig();
+                const apiUrl = window.prompt('Firebase Hosting 주소를 입력하세요. 예: https://recruit-pro-e97a3.web.app', current.apiUrl);
+                if (apiUrl === null) return false;
+                const adminToken = window.prompt('면접일 조율 API 관리 토큰을 입력하세요.', current.adminToken);
+                if (adminToken === null) return false;
+                writeScheduleRequestConfig({ apiUrl, adminToken });
+                alert('면접일 조율 링크 설정을 저장했습니다.');
                 return true;
             };
             const saveRecruitSmsHistory = async (record, entry) => {
@@ -1244,6 +1356,206 @@
                     const statusLabel = entry.status === 'success' ? '성공' : '실패';
                     return appendCandidateHistory(nextCandidate, `문자 발송 ${statusLabel}: ${entry.kindLabel}`, entry.at);
                 });
+            };
+            const openScheduleRequestModal = (record) => {
+                if (!record?.candidate?.id) return;
+                if (!normalizePhone(record.candidate.phone)) {
+                    alert('지원자 연락처가 없어 면접일 조율 요청 문자를 발송할 수 없습니다.');
+                    return;
+                }
+                setScheduleRequestModalRecord(record);
+                setScheduleOptionInputs(buildDefaultScheduleOptionInputs(record.candidate));
+                setScheduleRequestExpiresAt(buildDefaultScheduleExpiresAt());
+            };
+            const closeScheduleRequestModal = () => {
+                setScheduleRequestModalRecord(null);
+                setScheduleOptionInputs(['', '', '']);
+                setScheduleRequestExpiresAt('');
+            };
+            const saveScheduleRequestSmsResult = async (record, scheduleRequest, entry) => {
+                if (!record?.jobId || !record?.candidate?.id) return null;
+                return updatePostHireCandidateRecord(record.jobId, record.candidate.id, (candidate) => {
+                    const nextStatus = entry.status === 'success' ? 'sent' : 'failed';
+                    const nextCandidate = {
+                        ...candidate,
+                        scheduleRequest: {
+                            ...(candidate.scheduleRequest || {}),
+                            ...(scheduleRequest || {}),
+                            status: nextStatus,
+                            sentAt: entry.status === 'success' ? entry.at : (candidate.scheduleRequest?.sentAt || ''),
+                            smsAttemptedAt: entry.at,
+                            smsErrorMessage: entry.errorMessage || '',
+                            updatedAt: entry.at
+                        },
+                        smsHistory: [entry, ...((candidate.smsHistory || []).filter(Boolean))].slice(0, 50)
+                    };
+                    return appendCandidateHistory(nextCandidate, `면접일 조율 요청 문자 ${entry.status === 'success' ? '발송 완료' : '발송 실패'}`, entry.at);
+                });
+            };
+            const handleSendScheduleRequestSms = async () => {
+                const record = scheduleRequestModalRecord;
+                if (!record?.jobId || !record?.candidate?.id) return;
+                const candidate = record.candidate;
+                const phone = normalizePhone(candidate.phone);
+                if (!phone) {
+                    alert('지원자 연락처가 없어 면접일 조율 요청 문자를 발송할 수 없습니다.');
+                    return;
+                }
+                const options = normalizeScheduleOptions(scheduleOptionInputs);
+                if (options.length < MIN_SCHEDULE_REQUEST_OPTIONS) {
+                    alert(`면접 가능 일정은 최소 ${MIN_SCHEDULE_REQUEST_OPTIONS}개가 필요합니다.`);
+                    return;
+                }
+                const expiresAtDate = new Date(scheduleRequestExpiresAt);
+                if (!scheduleRequestExpiresAt || Number.isNaN(expiresAtDate.getTime())) {
+                    alert('응답 기한을 입력해주세요.');
+                    return;
+                }
+
+                let scheduleConfig = readScheduleRequestConfig();
+                if (!scheduleConfig.apiUrl || !scheduleConfig.adminToken) {
+                    const configured = configureScheduleRequestApi();
+                    if (!configured) return;
+                    scheduleConfig = readScheduleRequestConfig();
+                }
+                if (!scheduleConfig.apiUrl || !scheduleConfig.adminToken) {
+                    alert('Firebase Hosting 주소와 관리 토큰이 필요합니다.');
+                    return;
+                }
+
+                const nowIso = new Date().toISOString();
+                const sendingKey = `${record.jobId}:${candidate.id}:schedule_request`;
+                setScheduleRequestSendingKey(sendingKey);
+                let createdPayload = null;
+                let resultPayload = null;
+                let entryStatus = 'failed';
+                let errorMessage = '';
+                let message = '';
+
+                try {
+                    const createResponse = await fetch(`${scheduleConfig.apiUrl}/api/createScheduleRequest`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Schedule-Admin-Token': scheduleConfig.adminToken
+                        },
+                        body: JSON.stringify({
+                            jobId: record.jobId,
+                            candidateId: candidate.id,
+                            candidateName: candidate.name,
+                            jobTitle: record.jobTitle,
+                            options,
+                            expiresAt: expiresAtDate.toISOString(),
+                            baseUrl: scheduleConfig.apiUrl
+                        })
+                    });
+                    createdPayload = await createResponse.json().catch(() => null);
+                    if (!createResponse.ok || !createdPayload?.ok || !createdPayload?.link) {
+                        throw new Error(createdPayload?.message || `면접일 조율 링크 생성 실패 (${createResponse.status})`);
+                    }
+
+                    message = buildScheduleRequestSmsText(record, createdPayload.link, options);
+                    const confirmed = window.confirm(`${candidate.name}님에게 면접일 조율 요청 문자를 발송할까요?\n\n수신번호: ${phone}\n\n${message}`);
+                    if (!confirmed) {
+                        setScheduleRequestSendingKey('');
+                        return;
+                    }
+
+                    const smsConfig = readRecruitSmsConfig();
+                    const headers = { 'Content-Type': 'application/json' };
+                    if (smsConfig.clientToken) headers['X-Recruit-Sms-Token'] = smsConfig.clientToken;
+                    const response = await fetch(smsConfig.workerUrl, {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify({
+                            kind: 'schedule_request',
+                            recipients: [{
+                                candidateId: candidate.id,
+                                name: candidate.name,
+                                phone,
+                                message
+                            }],
+                            meta: {
+                                jobId: record.jobId,
+                                jobTitle: record.jobTitle,
+                                team: record.team,
+                                scheduleRequestId: createdPayload.requestId,
+                                sentAt: nowIso
+                            }
+                        })
+                    });
+                    resultPayload = await response.json().catch(() => null);
+                    if (!response.ok || !resultPayload?.ok) {
+                        throw new Error(resultPayload?.message || `문자 발송 요청 실패 (${response.status})`);
+                    }
+                    entryStatus = 'success';
+                } catch (error) {
+                    errorMessage = error?.message || String(error);
+                }
+
+                const resultData = resultPayload?.data || {};
+                const entry = {
+                    id: generateId(),
+                    kind: 'schedule_request',
+                    kindLabel: RECRUIT_SMS_KIND_LABELS.schedule_request,
+                    at: nowIso,
+                    status: entryStatus,
+                    phone,
+                    message,
+                    scheduleRequestId: createdPayload?.requestId || '',
+                    resultCode: resultPayload?.resultCode || resultData.resultCode || '',
+                    msgGroupId: resultData.msgGroupId || '',
+                    msgType: resultData.msgType || '',
+                    successCnt: resultData.successCnt || '',
+                    failCnt: resultData.failCnt || '',
+                    blockCnt: resultData.blockCnt || '',
+                    errorMessage
+                };
+
+                try {
+                    await saveScheduleRequestSmsResult(record, createdPayload?.scheduleRequest || null, entry);
+                } finally {
+                    setScheduleRequestSendingKey('');
+                }
+                if (entryStatus === 'success') {
+                    closeScheduleRequestModal();
+                    alert('면접일 조율 요청 문자를 발송했습니다.');
+                } else {
+                    alert(`면접일 조율 요청 문자 발송에 실패했습니다.\n${errorMessage || '응답을 확인해주세요.'}`);
+                }
+            };
+            const handleConfirmScheduleRequestSelection = async (record = selectedCandidateRecord) => {
+                if (!record?.jobId || !record?.candidate?.id) return;
+                const selectedOption = getSelectedScheduleOption(record.candidate);
+                if (!selectedOption) {
+                    alert('지원자가 선택한 일정이 없습니다.');
+                    return;
+                }
+                const confirmed = window.confirm(`${record.candidate.name}님의 선택 일정을 최종 면접 일정으로 확정할까요?\n\n${selectedOption.label || formatDateTimeLabel(selectedOption.dateTime)}`);
+                if (!confirmed) return;
+                const nowIso = new Date().toISOString();
+                const updatedCandidates = await updatePostHireCandidateRecord(record.jobId, record.candidate.id, (candidate) => {
+                    const currentRequest = candidate.scheduleRequest || {};
+                    const currentSelected = getSelectedScheduleOption(candidate) || selectedOption;
+                    const nextCandidate = {
+                        ...candidate,
+                        interviewDate: currentSelected.dateTime,
+                        scheduleRequest: {
+                            ...currentRequest,
+                            status: 'confirmed',
+                            confirmedAt: nowIso,
+                            updatedAt: nowIso,
+                            finalDecision: {
+                                status: 'confirmed',
+                                at: nowIso,
+                                dateTime: currentSelected.dateTime,
+                                label: currentSelected.label || formatDateTimeLabel(currentSelected.dateTime)
+                            }
+                        }
+                    };
+                    return appendCandidateHistory(nextCandidate, `면접 일정 최종확정: ${currentSelected.label || formatDateTimeLabel(currentSelected.dateTime)}`, nowIso);
+                });
+                if (updatedCandidates) alert('면접 일정이 최종확정되었습니다. 최종 안내 문자는 면접장소 안내 문자로 발송하세요.');
             };
             const handleSendRecruitSms = async (record, kind) => {
                 if (!record?.jobId || !record?.candidate?.id) return;
@@ -1266,7 +1578,7 @@
                     config = readRecruitSmsConfig();
                 }
                 if (!config.workerUrl) {
-                    alert('Cloudflare Worker URL이 없어 문자를 발송할 수 없습니다.');
+                    alert('로컬 문자 발송 URL이 없어 문자를 발송할 수 없습니다.');
                     return;
                 }
 
@@ -1584,7 +1896,7 @@
                 rows.push(['요약', '불합격/불합격률', totals.rejected, `${rejectionRate}%`, '', '']);
                 rows.push(['요약', '면접 진행중', totals.inInterview, '', '', '']);
                 rows.push(['리스크', '오늘 면접', scheduleAlerts.todayInterviews.length, '', '', '']);
-                rows.push(['리스크', '사람인 요청 전', scheduleAlerts.missingSaraminRequests.length, '', '', '']);
+                rows.push(['리스크', '조율 요청 전', scheduleAlerts.missingSaraminRequests.length, '', '', '']);
                 rows.push(['리스크', '확정 일정 없음', scheduleAlerts.missingInterviewSchedule.length, '', '', '']);
                 rows.push(['리스크', '7일 이내 마감', scheduleAlerts.withinWeekDeadlines.length, '', '', '']);
                 rows.push(['파이프라인', '단계', '인원', '', '', '']);
@@ -1612,7 +1924,7 @@
                     rows.push(['리스크상세', '오늘면접', x.jobTitle || '', x.name || '', '', x.time || '']);
                 });
                 scheduleAlerts.missingSaraminRequests.forEach((x) => {
-                    rows.push(['리스크상세', '사람인요청전', x.jobTitle || '', x.name || '', x.status || '', '']);
+                    rows.push(['리스크상세', '조율요청전', x.jobTitle || '', x.name || '', x.status || '', '']);
                 });
                 scheduleAlerts.missingInterviewSchedule.forEach((x) => {
                     rows.push(['리스크상세', '확정일정없음', x.jobTitle || '', x.name || '', x.status || '', '']);
@@ -1669,7 +1981,7 @@
                     </div>
                     <div class="grid4">
                         <div class="card"><strong>오늘 면접</strong><div>${scheduleAlerts.todayInterviews.length}건</div></div>
-                        <div class="card"><strong>사람인 요청 전</strong><div>${scheduleAlerts.missingSaraminRequests.length}건</div></div>
+                        <div class="card"><strong>조율 요청 전</strong><div>${scheduleAlerts.missingSaraminRequests.length}건</div></div>
                         <div class="card"><strong>확정 일정 없음</strong><div>${scheduleAlerts.missingInterviewSchedule.length}건</div></div>
                         <div class="card"><strong>7일 내 마감</strong><div>${scheduleAlerts.withinWeekDeadlines.length}건</div></div>
                         <div class="card"><strong>면접 진행중</strong><div>${totals.inInterview}명</div></div>
@@ -1693,7 +2005,7 @@
                     <h3>즉시 조치 필요</h3>
                     <table><thead><tr><th>유형</th><th>공고</th><th>지원자</th><th>상태/일시</th></tr></thead><tbody>
                     ${scheduleAlerts.todayInterviews.map((x) => `<tr><td>오늘 면접</td><td>${escapeHtml(x.jobTitle || '')}</td><td>${escapeHtml(x.name || '')}</td><td>${escapeHtml(x.time || '')}</td></tr>`).join('')}
-                    ${scheduleAlerts.missingSaraminRequests.map((x) => `<tr><td>사람인 요청 전</td><td>${escapeHtml(x.jobTitle || '')}</td><td>${escapeHtml(x.name || '')}</td><td>${escapeHtml(x.status || '')}</td></tr>`).join('')}
+                    ${scheduleAlerts.missingSaraminRequests.map((x) => `<tr><td>조율 요청 전</td><td>${escapeHtml(x.jobTitle || '')}</td><td>${escapeHtml(x.name || '')}</td><td>${escapeHtml(x.status || '')}</td></tr>`).join('')}
                     ${scheduleAlerts.missingInterviewSchedule.map((x) => `<tr><td>확정 일정 없음</td><td>${escapeHtml(x.jobTitle || '')}</td><td>${escapeHtml(x.name || '')}</td><td>${escapeHtml(x.status || '')}</td></tr>`).join('')}
                     ${scheduleAlerts.todayInterviews.length === 0 && scheduleAlerts.missingInterviewSchedule.length === 0 && scheduleAlerts.missingSaraminRequests.length === 0 ? '<tr><td colspan="4">즉시 조치 항목 없음</td></tr>' : ''}
                     </tbody></table>
@@ -1718,7 +2030,7 @@
                 }));
                 const riskStats = [
                     { label: '오늘 면접', count: scheduleAlerts.todayInterviews.length, color: '#2563eb' },
-                    { label: '사람인 요청 전', count: scheduleAlerts.missingSaraminRequests.length, color: '#ea580c' },
+                    { label: '조율 요청 전', count: scheduleAlerts.missingSaraminRequests.length, color: '#ea580c' },
                     { label: '확정 일정 없음', count: scheduleAlerts.missingInterviewSchedule.length, color: '#d97706' },
                     { label: '7일 내 마감', count: scheduleAlerts.withinWeekDeadlines.length, color: '#dc2626' }
                 ];
@@ -1755,7 +2067,7 @@
                 const riskDonut = buildDonutSvg(riskStats, (_, i) => riskPalette[i % riskPalette.length], `${riskTotal}`);
                 const riskItems = [
                     ...scheduleAlerts.todayInterviews.map((x) => ({ type: '오늘 면접', job: x.jobTitle || '-', who: x.name || '-', when: x.time || '-' })),
-                    ...scheduleAlerts.missingSaraminRequests.map((x) => ({ type: '사람인 요청 전', job: x.jobTitle || '-', who: x.name || '-', when: x.status || '-' })),
+                    ...scheduleAlerts.missingSaraminRequests.map((x) => ({ type: '조율 요청 전', job: x.jobTitle || '-', who: x.name || '-', when: x.status || '-' })),
                     ...scheduleAlerts.missingInterviewSchedule.map((x) => ({ type: '확정 일정 없음', job: x.jobTitle || '-', who: x.name || '-', when: x.status || '-' })),
                     ...scheduleAlerts.withinWeekDeadlines.map((x) => ({ type: '마감임박', job: x.title || '-', who: '-', when: x.period?.end || '-' }))
                 ].slice(0, 5);
@@ -1777,8 +2089,8 @@
                     });
                 const actions = [
                     { label: '오늘 면접 진행 준비', value: `${scheduleAlerts.todayInterviews.length}건` },
-                    { label: '사람인 면접일자 요청 등록', value: `${scheduleAlerts.missingSaraminRequests.length}건` },
-                    { label: '사람인 응답 확인 후 일정 확정', value: `${scheduleAlerts.pendingSaraminResponses.length}건` },
+                    { label: '면접일 조율 요청 등록', value: `${scheduleAlerts.missingSaraminRequests.length}건` },
+                    { label: '지원자 선택 확인 후 일정 확정', value: `${scheduleAlerts.pendingSaraminResponses.length}건` },
                     { label: '7일 내 마감 공고 우선 검토', value: `${scheduleAlerts.withinWeekDeadlines.length}건` }
                 ];
 
@@ -2250,7 +2562,7 @@
                             <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.AlertTriangle className="w-5 h-5 text-amber-500" /> 일정 누락/임박 알림</h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 text-sm">
                                 <div className="rounded-xl border border-orange-100 bg-orange-50 p-4">
-                                    <div className="text-orange-800 font-bold mb-1">사람인 요청 전</div>
+                                    <div className="text-orange-800 font-bold mb-1">조율 요청 전</div>
                                     <div className="text-2xl font-bold text-orange-700">{scheduleAlerts.missingSaraminRequests.length}</div>
                                     <div className="text-orange-700/80 mt-1">면접 단계인데 요청 기록이 없는 지원자</div>
                                 </div>
@@ -2607,11 +2919,16 @@
                         <div className="flex flex-wrap items-end justify-between gap-4 mb-8">
                             <div>
                                 <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Icons.Phone className="w-6 h-6 text-brand-600" /> 문자보내기</h2>
-                                <p className="text-gray-500 mt-1">면접장소 안내 문자 발송과 발송 이력을 관리합니다. 면접 일정과 채용 확정 안내는 사람인 기준으로 운영합니다.</p>
+                                <p className="text-gray-500 mt-1">면접일 조율 요청, 면접장소 안내 문자 발송과 발송 이력을 관리합니다. 문자 발송은 로컬 서버 기준으로 운영합니다.</p>
                             </div>
-                            <button type="button" onClick={configureRecruitSmsWorker} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2">
-                                <Icons.Cloud className="w-4 h-4" /> 발송 URL 설정
-                            </button>
+                            <div className="flex flex-wrap gap-2">
+                                <button type="button" onClick={configureScheduleRequestApi} className="bg-white border border-blue-200 hover:bg-blue-50 text-blue-700 px-4 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2">
+                                    <Icons.Calendar className="w-4 h-4" /> 조율 링크 설정
+                                </button>
+                                <button type="button" onClick={configureRecruitSmsWorker} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2">
+                                    <Icons.Cloud className="w-4 h-4" /> 문자 서버 확인
+                                </button>
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -2664,7 +2981,10 @@
                                             const candidate = record.candidate;
                                             const phone = normalizePhone(candidate.phone);
                                             const latest = recruitSmsLatest(candidate, 'interview');
+                                            const scheduleRequest = candidate.scheduleRequest || {};
+                                            const selectedScheduleOption = getSelectedScheduleOption(candidate);
                                             const interviewKey = `${record.jobId}:${candidate.id}:interview`;
+                                            const scheduleKey = `${record.jobId}:${candidate.id}:schedule_request`;
                                             return (
                                                 <tr key={`${record.jobId}-${candidate.id}`} onClick={() => openCandidate(record)} className="hover:bg-brand-50/40 cursor-pointer">
                                                     <td className="px-5 py-4 min-w-52">
@@ -2675,8 +2995,16 @@
                                                     <td className="px-5 py-4 min-w-36">
                                                         <div className="flex flex-wrap gap-1">
                                                             <Badge colorClass="bg-orange-50 text-orange-600 border-orange-100">면접장소 안내</Badge>
+                                                            {scheduleRequest.status && (
+                                                                <Badge colorClass={scheduleRequest.status === 'responded' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : scheduleRequest.status === 'failed' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-blue-50 text-blue-700 border-blue-100'}>
+                                                                    {SCHEDULE_REQUEST_STATUS_LABELS[scheduleRequest.status] || scheduleRequest.status}
+                                                                </Badge>
+                                                            )}
                                                         </div>
                                                         {!phone && <div className="text-xs text-red-500 mt-2">연락처 없음</div>}
+                                                        {selectedScheduleOption && (
+                                                            <div className="text-xs text-emerald-700 mt-2">선택: {selectedScheduleOption.label || formatDateTimeLabel(selectedScheduleOption.dateTime)}</div>
+                                                        )}
                                                     </td>
                                                     <td className="px-5 py-4 min-w-48">
                                                         {isInterviewCandidate(candidate) ? (
@@ -2717,6 +3045,29 @@
                                                     </td>
                                                     <td className="px-5 py-4 min-w-56">
                                                         <div className="flex flex-wrap gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    openScheduleRequestModal(record);
+                                                                }}
+                                                                disabled={!phone || scheduleRequestSendingKey === scheduleKey}
+                                                                className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            >
+                                                                일정 조율 요청
+                                                            </button>
+                                                            {selectedScheduleOption && scheduleRequest.status === 'responded' && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleConfirmScheduleRequestSelection(record);
+                                                                    }}
+                                                                    className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700"
+                                                                >
+                                                                    선택일 확정
+                                                                </button>
+                                                            )}
                                                             <button
                                                                 type="button"
                                                                 onClick={(e) => {
@@ -3508,7 +3859,7 @@
                                             {[
                                                 { id: 'all', label: '전체' },
                                                 { id: 'interview', label: '면접 단계' },
-                                                { id: 'requestNeeded', label: '사람인 요청 전' },
+                                                { id: 'requestNeeded', label: '조율 요청 전' },
                                                 { id: 'requested', label: '요청 완료/대기' },
                                                 { id: 'confirmed', label: '일정 확정' }
                                             ].map((option) => (
@@ -3542,7 +3893,7 @@
                                                             const cardStatusMeta = getCandidateStatusMeta(c.status);
                                                             const CardStatusIcon = cardStatusMeta.icon;
                                                             const interviewState = getInterviewOpsState(c);
-                                                            const requestLabel = interviewState === 'requestNeeded' ? '사람인 요청 전' : interviewState === 'requested' ? '요청 완료' : interviewState === 'confirmed' ? '일정 확정' : '';
+                                                            const requestLabel = interviewState === 'requestNeeded' ? '조율 요청 전' : interviewState === 'requested' ? '요청 완료' : interviewState === 'confirmed' ? '일정 확정' : '';
                                                             const requestColor = interviewState === 'requestNeeded' ? 'bg-orange-50 text-orange-700' : interviewState === 'requested' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700';
                                                             const previousStage = getAdjacentPipelineStage(c.status, -1);
                                                             const nextStage = getAdjacentPipelineStage(c.status, 1);
@@ -3742,6 +4093,80 @@
                         </div>
                     </Modal>
 
+                    <Modal isOpen={!!scheduleRequestModalRecord} onClose={closeScheduleRequestModal} title="면접일 조율 요청" size="lg">
+                        {scheduleRequestModalRecord && (
+                            <div className="space-y-5">
+                                <div className="p-4 rounded-xl bg-blue-50 border border-blue-100">
+                                    <div className="font-bold text-blue-900">{scheduleRequestModalRecord.candidate.name}</div>
+                                    <div className="text-sm text-blue-700 mt-1">{scheduleRequestModalRecord.jobTitle}</div>
+                                    <div className="text-xs text-blue-600 mt-2">지원자는 아래 후보 일정 중 1개만 선택할 수 있고, 제출 후 직접 수정할 수 없습니다.</div>
+                                </div>
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="block text-sm font-bold text-slate-700">후보 일정</label>
+                                        <span className="text-xs text-slate-400">최소 {MIN_SCHEDULE_REQUEST_OPTIONS}개</span>
+                                    </div>
+                                    <div className="space-y-2">
+                                        {scheduleOptionInputs.map((value, index) => (
+                                            <div key={index} className="flex gap-2">
+                                                <input
+                                                    type="datetime-local"
+                                                    value={value}
+                                                    onChange={(e) => setScheduleOptionInputs((prev) => prev.map((item, itemIndex) => itemIndex === index ? e.target.value : item))}
+                                                    className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-500"
+                                                />
+                                                {scheduleOptionInputs.length > MIN_SCHEDULE_REQUEST_OPTIONS && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setScheduleOptionInputs((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}
+                                                        className="px-3 py-2 rounded-lg border border-red-100 text-red-600 text-sm hover:bg-red-50"
+                                                    >
+                                                        삭제
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setScheduleOptionInputs((prev) => [...prev, ''])}
+                                        className="mt-2 px-3 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50"
+                                    >
+                                        후보 일정 추가
+                                    </button>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-2">응답 기한</label>
+                                    <input
+                                        type="datetime-local"
+                                        value={scheduleRequestExpiresAt}
+                                        onChange={(e) => setScheduleRequestExpiresAt(e.target.value)}
+                                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-500"
+                                    />
+                                </div>
+                                <div className="p-3 rounded-lg bg-amber-50 border border-amber-100 text-xs text-amber-800 leading-relaxed">
+                                    문자 발송은 고정 주소 {DEFAULT_RECRUIT_SMS_WORKER_URL} 로 진행됩니다. 전송 전 로컬 문자발송 서버가 실행 중이어야 합니다.
+                                </div>
+                                <div className="flex justify-end gap-2 pt-2">
+                                    <button type="button" onClick={configureScheduleRequestApi} className="px-4 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-bold hover:bg-blue-50">
+                                        조율 링크 설정
+                                    </button>
+                                    <button type="button" onClick={closeScheduleRequestModal} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">
+                                        취소
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleSendScheduleRequestSms}
+                                        disabled={scheduleRequestSendingKey === `${scheduleRequestModalRecord.jobId}:${scheduleRequestModalRecord.candidate.id}:schedule_request`}
+                                        className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {scheduleRequestSendingKey === `${scheduleRequestModalRecord.jobId}:${scheduleRequestModalRecord.candidate.id}:schedule_request` ? '발송 중' : '링크 생성 후 문자 발송'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
+
                     <Modal isOpen={isCandidateModalOpen} onClose={() => setIsCandidateModalOpen(false)} title="지원자 상세 정보">
                         {selectedCandidate && (
                             <div className="space-y-6">
@@ -3791,21 +4216,31 @@
                                         </div>
                                         <div className="flex flex-wrap gap-2">
                                             {isInterviewCandidate(selectedCandidate) && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleSendRecruitSms(selectedCandidateRecord, 'interview')}
-                                                    disabled={!selectedCandidateRecord || !selectedCandidate.phone || smsSendingKey === `${selectedCandidateRecord?.jobId}:${selectedCandidate.id}:interview`}
-                                                    className="px-3 py-2 rounded-lg text-sm font-bold bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                >
-                                                    면접장소 안내 문자
-                                                </button>
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openScheduleRequestModal(selectedCandidateRecord)}
+                                                        disabled={!selectedCandidateRecord || !selectedCandidate.phone || scheduleRequestSendingKey === `${selectedCandidateRecord?.jobId}:${selectedCandidate.id}:schedule_request`}
+                                                        className="px-3 py-2 rounded-lg text-sm font-bold bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    >
+                                                        면접일 조율 요청
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSendRecruitSms(selectedCandidateRecord, 'interview')}
+                                                        disabled={!selectedCandidateRecord || !selectedCandidate.phone || smsSendingKey === `${selectedCandidateRecord?.jobId}:${selectedCandidate.id}:interview`}
+                                                        className="px-3 py-2 rounded-lg text-sm font-bold bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    >
+                                                        면접장소 안내 문자
+                                                    </button>
+                                                </>
                                             )}
                                             <button
                                                 type="button"
                                                 onClick={configureRecruitSmsWorker}
                                                 className="px-3 py-2 rounded-lg text-sm bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
                                             >
-                                                발송 URL 설정
+                                                문자 서버 확인
                                             </button>
                                         </div>
                                     </div>
@@ -3832,17 +4267,22 @@
                                         <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
                                             <div className="flex items-start justify-between gap-3 mb-3">
                                                 <div>
-                                                    <h4 className="font-bold text-blue-800 flex items-center gap-2"><Icons.Calendar className="w-4 h-4" /> 사람인 면접일자 요청</h4>
-                                                    <p className="text-xs text-blue-600 mt-1">사람인에서 면접 가능 일자를 요청한 뒤, 이곳에는 요청 여부와 최종 확정 일정을 기록합니다.</p>
+                                                    <h4 className="font-bold text-blue-800 flex items-center gap-2"><Icons.Calendar className="w-4 h-4" /> 면접일 조율 요청</h4>
+                                                    <p className="text-xs text-blue-600 mt-1">지원자에게 후보 일정을 보내고, 지원자가 선택한 일정을 검토한 뒤 최종 확정합니다.</p>
                                                 </div>
                                                 <Badge colorClass="bg-white text-blue-700 border-blue-200">
                                                     {SCHEDULE_REQUEST_STATUS_LABELS[getScheduleRequestStatus(selectedCandidate)] || '초안'}
                                                 </Badge>
                                             </div>
-                                            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm mb-4">
                                                 <div className="rounded-lg border border-blue-100 bg-white/70 p-3">
-                                                    <div className="text-xs text-blue-600 mb-1">요청 기록</div>
+                                                    <div className="text-xs text-blue-600 mb-1">요청 발송</div>
                                                     <div className="font-medium text-blue-900">{formatDateTimeLabel(selectedCandidate.scheduleRequest?.sentAt)}</div>
+                                                </div>
+                                                <div className="rounded-lg border border-blue-100 bg-white/70 p-3">
+                                                    <div className="text-xs text-blue-600 mb-1">지원자 선택</div>
+                                                    <div className="font-medium text-blue-900">{getSelectedScheduleOption(selectedCandidate)?.label || formatDateTimeLabel(selectedCandidate.scheduleRequest?.selectedDateTime)}</div>
+                                                    <div className="text-xs text-blue-500 mt-1">{formatDateTimeLabel(selectedCandidate.scheduleRequest?.selectedAt)}</div>
                                                 </div>
                                                 <div className="rounded-lg border border-blue-100 bg-white/70 p-3">
                                                     <div className="text-xs text-blue-600 mb-1">확정 일정</div>
@@ -3850,13 +4290,31 @@
                                                     <div className="text-xs text-blue-500 mt-1">{getInterviewLocationLabel(selectedCandidate)}</div>
                                                 </div>
                                             </div>
-                                            <button
-                                                type="button"
-                                                onClick={handleMarkSaraminRequestSent}
-                                                className="px-3 py-2 rounded-lg text-sm bg-white border border-blue-200 text-blue-700 hover:bg-blue-100"
-                                            >
-                                                사람인 요청 완료 기록
-                                            </button>
+                                            <div className="flex flex-wrap gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openScheduleRequestModal(selectedCandidateRecord)}
+                                                    className="px-3 py-2 rounded-lg text-sm bg-white border border-blue-200 text-blue-700 hover:bg-blue-100"
+                                                >
+                                                    면접일 조율 요청 문자
+                                                </button>
+                                                {getSelectedScheduleOption(selectedCandidate) && selectedCandidate.scheduleRequest?.status === 'responded' && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleConfirmScheduleRequestSelection(selectedCandidateRecord)}
+                                                        className="px-3 py-2 rounded-lg text-sm bg-emerald-600 text-white font-bold hover:bg-emerald-700"
+                                                    >
+                                                        선택 일정 최종확정
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={handleMarkSaraminRequestSent}
+                                                    className="px-3 py-2 rounded-lg text-sm bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
+                                                >
+                                                    수동 요청 완료 기록
+                                                </button>
+                                            </div>
                                         </div>
 
                                         <div className="bg-white border border-gray-200 rounded-lg p-4">
