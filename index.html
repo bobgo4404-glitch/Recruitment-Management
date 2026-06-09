@@ -573,11 +573,11 @@
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
 
-        const Modal = ({ isOpen, onClose, title, children, size = 'md' }) => {
+        const Modal = ({ isOpen, onClose, title, children, size = 'md', zClass = 'z-50' }) => {
             if (!isOpen) return null;
             const sizeClass = size === 'lg' ? 'max-w-3xl' : 'max-w-lg';
             return (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+                <div className={`fixed inset-0 ${zClass} flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in`}>
                     <div className={`bg-white rounded-2xl shadow-2xl w-full ${sizeClass} overflow-hidden flex flex-col max-h-[90vh]`}>
                         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
                             <h3 className="font-bold text-lg text-gray-800">{title}</h3>
@@ -3051,7 +3051,7 @@
                                                                     e.stopPropagation();
                                                                     openScheduleRequestModal(record);
                                                                 }}
-                                                                disabled={!phone || scheduleRequestSendingKey === scheduleKey}
+                                                                disabled={scheduleRequestSendingKey === scheduleKey}
                                                                 className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed"
                                                             >
                                                                 일정 조율 요청
@@ -4093,7 +4093,7 @@
                         </div>
                     </Modal>
 
-                    <Modal isOpen={!!scheduleRequestModalRecord} onClose={closeScheduleRequestModal} title="면접일 조율 요청" size="lg">
+                    <Modal isOpen={!!scheduleRequestModalRecord} onClose={closeScheduleRequestModal} title="면접일 조율 요청" size="lg" zClass="z-[60]">
                         {scheduleRequestModalRecord && (
                             <div className="space-y-5">
                                 <div className="p-4 rounded-xl bg-blue-50 border border-blue-100">
@@ -4220,7 +4220,7 @@
                                                     <button
                                                         type="button"
                                                         onClick={() => openScheduleRequestModal(selectedCandidateRecord)}
-                                                        disabled={!selectedCandidateRecord || !selectedCandidate.phone || scheduleRequestSendingKey === `${selectedCandidateRecord?.jobId}:${selectedCandidate.id}:schedule_request`}
+                                                        disabled={!selectedCandidateRecord || scheduleRequestSendingKey === `${selectedCandidateRecord?.jobId}:${selectedCandidate.id}:schedule_request`}
                                                         className="px-3 py-2 rounded-lg text-sm font-bold bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed"
                                                     >
                                                         면접일 조율 요청
